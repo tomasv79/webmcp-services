@@ -1,8 +1,9 @@
 # WebMCP services directory (demo)
 
 A one-page services directory in the style of paslaugos.lt, with 10,000 fictional providers from Lithuania, Latvia and Estonia.
-AI agents search it through three WebMCP tools. The site has no backend. It has two forms: a demo sign-in, and a form
-that adds a service and keeps it in the visitor's own browser.
+AI agents search it through three WebMCP tools, and a fourth tool lets an agent fill in the new-service form for the
+visitor to submit. The site has no backend. It has two forms: a demo sign-in, and a form that adds a service and keeps it
+in the visitor's own browser.
 
 **All shipped data is invented.** Emails and websites use the reserved `.example` domain, and phone numbers start with `000`, which no Baltic operator assigns.
 A service added with the form holds whatever its author typed; it never leaves that browser.
@@ -60,7 +61,7 @@ dialog first and the form right after signing in.
 - There is no backend, so a new service is kept in `localStorage` under `webmcp-services.listings`. It is visible only in
   that browser, in all tabs of the site, and survives a reload. Clearing the site data removes it; the page has no
   button to edit or delete a service yet.
-- A new service is a normal listing: the list, the filters and the three tools find it. It gets the next free id
+- A new service is a normal listing: the list, the filters and the three search tools find it. It gets the next free id
   (`svc-10001`, `svc-10002`, ...), a **Pridėta šioje naršyklėje** badge, and is shown highlighted above the list right
   after it is added.
 - It has no reviews: `rating` is `{ average: 0, count: 0 }`, so it sorts after the rated listings and `minRating` leaves
@@ -75,6 +76,8 @@ dialog first and the form right after signing in.
 - Where `localStorage` is blocked or full, the service is added until the reload and the page says so.
 - Like the sign-in, the form has `method="dialog"` and no `action`: nothing is sent anywhere.
 - A form that is cancelled keeps what was typed; it is emptied after the service is added.
+- An agent can fill in the form with the `draft_service` tool (see below). The form then shows a line saying that an AI
+  agent filled it in. Only the person can submit it.
 
 ## Tools
 
@@ -83,6 +86,7 @@ dialog first and the form right after signing in.
 | `search_services` | `query`, `category`, `country`, `city`, `priceMax`, `priceUnit`, `minRating`, `language`, `travelsToClient`, `openNow`, `availableWithinDays`, `sortBy`, `limit`, `offset` (all optional) | `total`, `returned`, `offset`, `appliedFilters`, `warnings`, `results[]` |
 | `get_service` | `id` | `service`: the full listing with weekly hours and computed availability |
 | `list_service_filters` | none | valid categories, countries, cities, price units, languages, sort options, with counts |
+| `draft_service` | the fields of the new-service form | `status`, `message`, `draft`, `warnings` |
 
 Things worth knowing when calling them:
 
@@ -96,6 +100,31 @@ Things worth knowing when calling them:
 - `limit` is clamped to 1..20 (default 10); walk through a large result with `offset`. The page itself shows 10 cards per page, so a tool answer of up to 20 results can cover two pages; the page opens at the first of them.
 - The input schema lists the canonical values. The tools also accept other letter case, country names (`Latvia`, `Estija`) and city spellings, but a client that validates against the schema first will only let the canonical values through.
 
+### `draft_service`
+
+The first three tools only read. `draft_service` is the one tool that changes the page, so it is the only one without
+`readOnlyHint`. It still adds nothing by itself:
+
+- It puts the given values into the new-service form and opens the form. The service is added only when the person
+  presses **Pridėti paslaugą**. The vendored polyfill has no `requestUserInteraction`, so the open form is the
+  confirmation step.
+- `status` is `awaiting_user` when the form is open, or `sign_in_required` when nobody is signed in: the sign-in dialog
+  opens first and the filled form right after it. The agent never gets or types the password.
+- `draft` is the listing as the form will read it, without an id. The tool returns at once and cannot see whether the
+  person submitted or cancelled; afterwards `search_services` finds the new listing.
+- Input: `title`, `category`, `description`, `tags`, `providerName`, `providerType`, `yearsExperience`, `phone`, `email`,
+  `country`, `city`, `address`, `postalCode`, `travelsToClient`, `radiusKm`, `remote`, `priceFrom`, `priceTo`,
+  `priceUnit`, `calloutFee`, `negotiable`, `languages`, `hours`, `leadTimeDays`, `emergency`. Numbers are numbers,
+  `tags` and `languages` are lists, and `hours` has one `{ "open": "09:00", "close": "18:00" }` per working day
+  (`mon` to `sun`); a day that is left out is a day off.
+- The values go through the same checks as the form (`js/listing-input.js`). Wrong input returns every wrong field at
+  once: `{ error, errors: [{ field, message, validValues? }] }`, where `error` is the first of `errors`, the messages are
+  in English and the page is left alone.
+- Two things the form reader lets through are refused here, because an agent would not notice them: a boolean written as
+  a string (`"true"`), and an unknown day in `hours` (`monday`). Unknown fields are ignored and named in `warnings`.
+- Every call replaces the whole form, including what the person typed there, so the agent always sends the complete
+  listing.
+
 ## How it is built
 
 ```
@@ -108,10 +137,11 @@ public/
   js/text.js                  normalise, tokenise, stem match
   js/availability.js          Vilnius clock, openNow, nextFreeDate
   js/search.js                searchServices(catalog, filters, now)
-  js/tools.js                 createTools({ catalog, now, showFilters, showListing })
+  js/tools.js                 createTools({ catalog, now, showFilters, showListing, showDraft })
   js/webmcp.js                registerTools(tools)
   js/auth.js                  two demo users, createAuth({ storage }): signIn, signOut, currentUser
-  js/listing-input.js         createListingReader(catalog): form values in, a listing or a list of errors out
+  js/listing-input.js         createListingReader(catalog): form values in, a listing or a list of errors out;
+                              inputOfListing(listing): the way back, used to fill the form from a draft
   js/user-listings.js         createUserListings({ catalog, read, storage }): sync, add; added listings in localStorage
   js/app.js                   page rendering and wiring
 tests/                        one file per module, plus page.test.js for index.html rules
@@ -159,7 +189,8 @@ owns the relay port decides, so restart them all.
 
 How the relay presents the tools (checked on 2026-11-25 with the flight demo open at the same time):
 
-- With one tab of this site open, the tools keep their names: `search_services`, `get_service`, `list_service_filters`.
+- With one tab of this site open, the tools keep their names: `search_services`, `get_service`, `list_service_filters`
+  `draft_service` was added after that check; the relay lists it the same way, with its full input schema.
 - With two or more tabs open, each tab's tools get the first four characters of that tab's id as a suffix,
   for example `search_services_ab69` and `search_services_7bce`. `webmcp_list_sources` shows which tab is which.
   A call acts on the page of the tab it names, so close spare tabs to keep the plain names.

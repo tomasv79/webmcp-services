@@ -46,6 +46,7 @@ const dom = {
   serviceDialog: $("service-dialog"),
   serviceForm: $("service-form"),
   serviceError: $("service-error"),
+  serviceDraft: $("service-draft"),
   serviceCancel: $("service-cancel"),
   serviceLanguages: $("s-languages"),
   serviceHours: $("s-hours"),
@@ -500,6 +501,30 @@ function serviceInput() {
   return input;
 }
 
+/** The opposite of serviceInput(): put a form input into the controls. A field the input does not have keeps its default. */
+function setServiceInput(input) {
+  dom.serviceForm.reset();
+  clearServiceErrors();
+  // The list of cities follows the country, so the country goes in first.
+  serviceFields.country.value = input.country;
+  fillServiceCities();
+  for (const [name, field] of Object.entries(serviceFields)) {
+    if (input[name] === undefined) continue;
+    if (field.type === "checkbox") field.checked = input[name] === true;
+    else field.value = input[name];
+  }
+  for (const box of dom.serviceLanguages.querySelectorAll("input")) box.checked = input.languages.includes(box.value);
+  for (const [day, { works, open, close }] of hourRows) {
+    const slot = input.hours[day];
+    works.checked = Boolean(slot);
+    if (slot) {
+      open.value = slot.open;
+      close.value = slot.close;
+    }
+  }
+  syncServiceForm();
+}
+
 /** Where an error of a field is shown: the control that gets marked and the box the message is added to. */
 function serviceErrorPlace(field) {
   if (field === "languages") return { control: dom.serviceLanguages.querySelector("input"), box: dom.serviceLanguages };
@@ -550,6 +575,26 @@ function openServiceForm() {
   dom.serviceDialog.showModal();
 }
 
+/**
+ * draft_service: the agent's values go into the form and the form opens for the person to check and submit.
+ * Nothing is added here. A signed-out person gets the sign-in first and the filled form right after it.
+ */
+function showDraft(input) {
+  setServiceInput(input);
+  dom.serviceDraft.hidden = false;
+  const signedIn = Boolean(auth.currentUser());
+  if (dom.serviceDialog.open) {
+    dom.serviceDialog.scrollTop = 0;
+  } else if (dom.loginDialog.open) {
+    // The person is already at the sign-in: leave what they typed and open the form when they are done.
+    afterSignIn = openServiceForm;
+    dom.loginReason.hidden = false;
+  } else {
+    openServiceForm();
+  }
+  return { signedIn };
+}
+
 function bindServiceForm() {
   // What was typed stays in the form when it is cancelled; it is emptied only after the service is added.
   dom.addService.addEventListener("click", openServiceForm);
@@ -578,6 +623,7 @@ function bindServiceForm() {
     const { listing } = result;
     adopt([listing]);
     dom.serviceForm.reset();
+    dom.serviceDraft.hidden = true;
     clearServiceErrors();
     fillServiceCities();
     syncServiceForm();
@@ -615,5 +661,5 @@ setInterval(() => {
   if (!document.hidden && !usingControls) render();
 }, 60_000);
 
-const tools = createTools({ catalog, now: () => new Date(), showFilters, showListing });
+const tools = createTools({ catalog, now: () => new Date(), showFilters, showListing, showDraft });
 await registerTools(tools);

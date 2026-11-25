@@ -151,14 +151,14 @@ test("new service: the form sends nothing anywhere and sits in a dialog", () => 
 test("new service: the page has every element the script expects, and a label for every field", () => {
   const appSource = read("js/app.js");
   const ids = [...appSource.matchAll(/\$\("([^"]+)"\)/g)].map((m) => m[1]);
-  for (const id of ["add-service", "service-dialog", "service-form", "service-error", "service-cancel", "s-languages", "s-hours", "login-reason"]) {
+  for (const id of ["add-service", "service-dialog", "service-form", "service-error", "service-draft", "service-cancel", "s-languages", "s-hours", "login-reason"]) {
     assert.ok(ids.includes(id), `app.js uses #${id}`);
   }
   for (const id of ids) assert.equal(html.split(`id="${id}"`).length - 1, 1, `#${id} is in the page once`);
   for (const id of ids.filter((name) => /^s-(?!languages$|hours$)/.test(name))) {
     assert.match(html, new RegExp(`<label[^>]*\\sfor="${id}"`), `#${id} has a label`);
   }
-  for (const id of ["service-error", "login-reason"]) {
+  for (const id of ["service-error", "service-draft", "login-reason"]) {
     assert.match(html, new RegExp(`<[^>]*id="${id}"[^>]*\\shidden[\\s>]`), `#${id} starts hidden`);
   }
 });
@@ -184,9 +184,9 @@ test("AC1.2 and AC1.3 the page has the controls the script expects", () => {
   }
 });
 
-test("only the temporary check tool is gone: the page registers the three real tools", () => {
+test("only the temporary check tool is gone: the page registers the real tools with all three page effects", () => {
   const appSource = read("js/app.js");
   assert.doesNotMatch(appSource, /ping_services/);
-  assert.match(appSource, /createTools\(/);
+  assert.match(appSource, /createTools\(\{[^}]*\bshowFilters, showListing, showDraft \}\)/);
   assert.match(appSource, /registerTools\(/);
 });

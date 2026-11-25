@@ -25,7 +25,7 @@ export const LIMITS = {
 };
 
 // What a person may type, and how the catalog writes it: "08318" and "lt08318" both become "LT-08318".
-const POSTAL = {
+export const POSTAL = {
   LT: { pattern: /^(?:LT-?)?(\d{5})$/i, write: (digits) => `LT-${digits}`, example: "LT-01103" },
   LV: { pattern: /^(?:LV-?)?(\d{4})$/i, write: (digits) => `LV-${digits}`, example: "LV-1050" },
   EE: { pattern: /^(\d{5})$/, write: (digits) => digits, example: "10111" },
@@ -77,6 +77,46 @@ function readSlot(value) {
   if (value === undefined || value === null || value === false) return null;
   const [open, close] = Array.isArray(value) ? value : [value?.open, value?.close];
   return [typeof open === "string" ? open.trim() : "", typeof close === "string" ? close.trim() : ""];
+}
+
+/**
+ * The form input that reads back to this listing: what the form holds when it is filled in from a listing.
+ * Text and number fields are strings and checkboxes are booleans, as the page sends them.
+ * A provider who does not travel has no radiusKm here, so the form keeps its own default in that field.
+ * @param {object} listing  A listing the form reader returned.
+ */
+export function inputOfListing(listing) {
+  const { provider, contact, location, serviceArea, price, availability } = listing;
+  const input = {
+    title: listing.title,
+    category: listing.category,
+    description: listing.description,
+    tags: listing.tags.join(", "),
+    providerName: provider.name,
+    providerType: provider.type,
+    yearsExperience: String(provider.yearsExperience),
+    phone: contact.phone,
+    email: contact.email,
+    country: location.country,
+    city: location.city,
+    address: location.address,
+    postalCode: location.postalCode,
+    travelsToClient: serviceArea.travelsToClient,
+    remote: serviceArea.remote,
+    priceFrom: String(price.from),
+    priceTo: price.to === undefined ? "" : String(price.to),
+    priceUnit: price.unit,
+    calloutFee: price.calloutFee === undefined ? "" : String(price.calloutFee),
+    negotiable: price.negotiable,
+    languages: [...listing.languages],
+    hours: Object.fromEntries(
+      Object.entries(availability.hours).map(([day, slot]) => [day, slot ? { open: slot[0], close: slot[1] } : null]),
+    ),
+    leadTimeDays: String(availability.leadTimeDays),
+    emergency: availability.emergency,
+  };
+  if (serviceArea.travelsToClient) input.radiusKm = String(serviceArea.radiusKm);
+  return input;
 }
 
 /**

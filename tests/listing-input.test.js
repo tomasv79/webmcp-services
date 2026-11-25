@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createListingReader, INPUT_FIELDS, LIMITS, WEEKDAY_LABEL } from "../public/js/listing-input.js";
+import { createListingReader, inputOfListing, INPUT_FIELDS, LIMITS, WEEKDAY_LABEL } from "../public/js/listing-input.js";
 import { searchServices } from "../public/js/search.js";
 import { createTools } from "../public/js/tools.js";
 import * as data from "../public/js/data.js";
@@ -258,4 +258,26 @@ test("new service: the kept input has only the form's fields and reads back to t
   given.hours.mon.open = "00:00";
   assert.equal(result.input.hours.mon.open, "09:00");
   given.hours.mon.open = "09:00";
+});
+
+test("new service: a listing turned back into form input reads to the same listing", () => {
+  const variants = [
+    {},
+    { priceTo: "40,5", calloutFee: "0", negotiable: true, remote: true, tags: "" },
+    { travelsToClient: false, radiusKm: "" },
+    { emergency: true, leadTimeDays: "" },
+    { country: "EE", city: "Tallinn", postalCode: "10111", languages: ["et", "ru"], hours: { sat: ["10:00", "14:00"] } },
+  ];
+  for (const overrides of variants) {
+    const { listing } = read(valid(overrides));
+    const input = inputOfListing(listing);
+    assert.deepEqual(read(input).listing, listing, JSON.stringify(overrides));
+    assert.ok(Object.keys(input).every((field) => INPUT_FIELDS.includes(field)));
+    // What the page puts into text and number fields is text; a checkbox gets a boolean.
+    for (const field of ["yearsExperience", "priceFrom", "priceTo", "calloutFee", "leadTimeDays", "tags"]) assert.equal(typeof input[field], "string", field);
+    for (const field of ["travelsToClient", "remote", "negotiable", "emergency"]) assert.equal(typeof input[field], "boolean", field);
+  }
+  // A provider who does not travel leaves the distance to the form's default.
+  assert.equal(inputOfListing(read(valid({ travelsToClient: false })).listing).radiusKm, undefined);
+  assert.equal(inputOfListing(read(valid()).listing).radiusKm, "15");
 });

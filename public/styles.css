@@ -156,6 +156,16 @@ main,
   font-size: 0.85rem;
 }
 
+/* Shown while the form holds values that an AI agent put there. */
+.draft-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--agent-bg);
+  color: var(--agent-text);
+  font-size: 0.9rem;
+}
+
 .dialog-error {
   margin: 0;
   padding: 8px 10px;

@@ -1,4 +1,5 @@
-// The three WebMCP tools. Pure logic: the page effects (showFilters, showListing) and the clock are passed in,
+// The WebMCP tools: three that read the directory and one that fills in the new-service form.
+// Pure logic: the page effects (showFilters, showListing, showDraft) and the clock are passed in,
 // so everything here runs in Node tests without a browser.
 //
 // A tool never throws: the WebMCP polyfill would turn a thrown error into a bare "OperationError" with no message.
@@ -6,6 +7,7 @@
 
 import { normalize } from "./text.js";
 import { computeAvailability, TIME_ZONE } from "./availability.js";
+import { createListingReader, inputOfListing, INPUT_FIELDS, LIMITS, POSTAL, PROVIDER_TYPES } from "./listing-input.js";
 import { searchServices, SORT_OPTIONS } from "./search.js";
 
 export const LIMIT_DEFAULT = 10;
@@ -50,6 +52,7 @@ function buildVocabulary(catalog) {
     },
     language: { values: [...catalog.LANGUAGES], find: lookup(catalog.LANGUAGES.map((code) => [code, code])) },
     priceUnit: { values: [...catalog.PRICE_UNITS], find: lookup(catalog.PRICE_UNITS.map((unit) => [unit, unit])) },
+    providerType: { values: [...PROVIDER_TYPES], find: lookup(PROVIDER_TYPES.map((type) => [type, type])) },
     sortBy: { values: [...SORT_OPTIONS], find: lookup(SORT_OPTIONS.map((sort) => [sort, sort])) },
   };
 }
@@ -113,6 +116,107 @@ function readSearchInput(input, vocabulary) {
 
   return { filters, limit, offset };
 }
+
+// ── draft_service: the agent's values for the new-service form ────────────
+
+const DRAFT_BOOLEANS = ["travelsToClient", "remote", "negotiable", "emergency"];
+const range = ([min, max]) => `${min} to ${max}`;
+
+// The form reader explains a wrong field in Lithuanian, for the person at the form. These say the same to an agent.
+const DRAFT_RULES = {
+  title: `title must be text of ${range(LIMITS.title)} characters.`,
+  category: "category must be one of the valid values.",
+  description: `description must be text of ${range(LIMITS.description)} characters.`,
+  tags: `tags must be a list of at most ${LIMITS.tags} texts, each up to ${LIMITS.tagLength} characters.`,
+  providerName: `providerName must be text of ${range(LIMITS.providerName)} characters.`,
+  providerType: "providerType must be one of the valid values.",
+  yearsExperience: `yearsExperience must be a whole number from 0 to ${LIMITS.yearsExperience}.`,
+  phone: "phone must be a phone number with 7 to 15 digits; a leading +, spaces, brackets and hyphens are allowed.",
+  email: `email must be an email address of at most ${LIMITS.emailLength} characters.`,
+  country: "country must be one of the valid values.",
+  city: "city must be one of the directory's cities in the given country.",
+  address: `address must be text of ${range(LIMITS.address)} characters: street and house number.`,
+  postalCode: `postalCode must fit the country: ${Object.entries(POSTAL).map(([code, rule]) => `"${rule.example}" in ${code}`).join(", ")}.`,
+  radiusKm: `radiusKm is required when travelsToClient is true: a whole number from 1 to ${LIMITS.radiusKm}.`,
+  priceFrom: `priceFrom must be a number greater than 0 and at most ${LIMITS.price} (EUR).`,
+  priceTo: "priceTo must be a number not lower than priceFrom (EUR). Leave it out when there is one price.",
+  priceUnit: "priceUnit must be one of the valid values.",
+  calloutFee: `calloutFee must be a number from 0 to ${LIMITS.calloutFee} (EUR). Leave it out when there is no fee.`,
+  languages: "languages must be a list with at least one of the valid values.",
+  hours: 'hours must be an object with at least one working day, for example { "mon": { "open": "09:00", "close": "18:00" } }.',
+  leadTimeDays: `leadTimeDays is required unless emergency is true: a whole number from 0 to ${LIMITS.leadTimeDays}; 0 means work can start today.`,
+};
+const dayRule = (field) =>
+  `${field} must be { "open": "HH:MM", "close": "HH:MM" } in 24-hour time, with open before close. Leave the day out for a day off.`;
+
+/**
+ * What the agent sent, as the form reader takes it. Known values are accepted in any case and spelling, as in the search.
+ * `errors` has what the reader would let through in silence: a "true" in quotes would be read as false.
+ */
+function readDraftInput(input, vocabulary, weekdays) {
+  const args = isPlainObject(input) ? input : {};
+  const draft = {};
+  const errors = [];
+  for (const field of INPUT_FIELDS) if (given(args[field])) draft[field] = args[field];
+
+  const known = (field, value) => (typeof value === "string" ? vocabulary[field].find.get(normalize(value).trim()) ?? value : value);
+  for (const field of ["category", "country", "city", "priceUnit", "providerType"]) {
+    if (field in draft) draft[field] = known(field, draft[field]);
+  }
+  if (Array.isArray(draft.languages)) draft.languages = draft.languages.map((code) => known("language", code));
+
+  // The form has one text field for the tags, so a list becomes the text a person would type there.
+  if (Array.isArray(draft.tags) && draft.tags.every((tag) => typeof tag === "string")) draft.tags = draft.tags.join(", ");
+  else if ("tags" in draft && typeof draft.tags !== "string") errors.push({ field: "tags", message: DRAFT_RULES.tags });
+
+  for (const field of DRAFT_BOOLEANS) {
+    if (field in draft && typeof draft[field] !== "boolean") {
+      errors.push({ field, message: `${field} must be true or false (a boolean, not a string).` });
+    }
+  }
+
+  if (isPlainObject(draft.hours)) {
+    const unknown = Object.keys(draft.hours).filter((day) => !weekdays.includes(day));
+    if (unknown.length > 0) {
+      errors.push({ field: "hours", message: `hours has unknown days: ${unknown.join(", ").slice(0, 80)}. Use the valid values as keys.` });
+    }
+  }
+
+  const warnings = [];
+  const ignored = Object.keys(args).filter((key) => !INPUT_FIELDS.includes(key));
+  if (ignored.length > 0) warnings.push(`Unknown fields were ignored: ${ignored.join(", ").slice(0, 200)}.`);
+  if (draft.travelsToClient !== true && "radiusKm" in draft) warnings.push("radiusKm was ignored, because travelsToClient is not true.");
+  if (draft.emergency === true && "leadTimeDays" in draft && Number(draft.leadTimeDays) !== 0) {
+    warnings.push("leadTimeDays was ignored, because emergency is true: an emergency provider answers today.");
+  }
+  return { draft, errors, warnings };
+}
+
+/** The listing as the form will read it; no id and no rating, because nothing is added yet. */
+function draftRecord(listing, category) {
+  const copy = structuredClone(listing);
+  return {
+    category: copy.category,
+    categoryName: { lt: category?.nameLt ?? null, en: category?.nameEn ?? null },
+    title: copy.title,
+    description: copy.description,
+    tags: copy.tags,
+    provider: copy.provider,
+    contact: copy.contact,
+    location: copy.location,
+    serviceArea: copy.serviceArea,
+    price: price(copy.price),
+    languages: copy.languages,
+    availability: copy.availability,
+  };
+}
+
+const DRAFT_STATUS = {
+  awaiting_user:
+    'The new-service form is open on the page with these values. Ask the user to check it and press "Pridėti paslaugą" (Add service). Nothing is added until they do.',
+  sign_in_required:
+    "The form is filled in, but the user is signed out. The sign-in dialog is open on the page, and the form opens right after the user signs in. The user signs in on the page themselves: do not ask for the password.",
+};
 
 const price = (p) => ({ from: p.from, to: p.to ?? null, unit: p.unit, negotiable: p.negotiable, calloutFee: p.calloutFee ?? null });
 
@@ -234,20 +338,54 @@ const GET_DESCRIPTION = `Get the full record of one service listing by id (for e
 
 Returns { notice, currency, timeZone, service }. "service" has the Lithuanian and English title and description, tags, provider (name, type, yearsExperience, verified), contact (phone, email, website), location (country, city, address, postalCode), serviceArea (travelsToClient, radiusKm, remote), price in EUR (from, to, unit, negotiable, calloutFee), rating, languages, and availability: weekly working hours per weekday, leadTimeDays, emergency, plus openNow, todayHours and nextFreeDate computed for the current Europe/Vilnius time. An unknown id returns { error: { field, message } }. The page shows the listing highlighted above its list.`;
 
+const DRAFT_DESCRIPTION = `Fill in the "add a service" form on the page with a new listing, for the user to check and submit. This tool does not add the listing: it opens the form with the given values, and the listing is added only when the user presses the submit button of the form. Use it when the user wants to advertise a service of their own in the directory. Pass only facts the user gave you and ask for the ones that are missing; never invent a phone, an email or an address.
+
+The directory holds fictional demo data. A listing added with the form is kept only in the user's browser and is sent nowhere.
+
+Required: title, category, description, providerName, providerType, yearsExperience, phone, email, country, city, address, postalCode, priceFrom, priceUnit, languages and hours. radiusKm is required when travelsToClient is true, and leadTimeDays unless emergency is true. The city must be one of the directory's cities in the given country: call list_service_filters for the valid categories, countries, cities, price units and languages. Title and description are written once, in the language the user wants; the form does not translate them. Prices are in EUR. "hours" has one entry per working day (mon, tue, wed, thu, fri, sat, sun) with open and close as "HH:MM" in Europe/Vilnius time; a day that is left out is a day off.
+
+Returns { notice, currency, timeZone, status, message, draft, warnings }. status is "awaiting_user" when the form is open and waits for the user, or "sign_in_required" when the user has to sign in on the page first; the filled form opens right after the sign-in. Never ask the user for the password. "draft" is the listing as the form will read it. The tool cannot see what the user does next: when the user says the service is added, find it with search_services. Every call replaces everything in the form, including what the user typed there, so always send the complete listing. Invalid input returns { error, errors } and leaves the page alone: "errors" lists every wrong field as { field, message, validValues }, and "error" is the first of them.`;
+
 const FILTERS_DESCRIPTION = `List the valid filter values for search_services, with the number of listings for each: categories (id, Lithuanian name, English name), countries with their cities and accepted alternative city spellings, price units, languages, sort options and the paging limits. Takes no input. All data is fictional demo data.`;
 
 /**
  * @param {object} deps
- * @param {object} deps.catalog       The data module: listings, categories, countries, cityAliases, PRICE_UNITS, LANGUAGES.
+ * @param {object} deps.catalog       The data module: listings, categories, countries, cityAliases, PRICE_UNITS, LANGUAGES, WEEKDAYS.
  * @param {() => Date} deps.now       Read at every call, so "open now" is never stale.
  * @param {(filters: object, view: { offset: number }) => void} [deps.showFilters]
  *        Show these filters and their result in the page list; view.offset is where the agent's slice starts.
  * @param {(id: string) => void} [deps.showListing]       Show a listing highlighted above the list.
+ * @param {(input: object) => { signedIn: boolean }} [deps.showDraft]
+ *        Put this form input into the new-service form and open it, behind the sign-in when nobody is signed in.
+ *        Unlike the two above, this effect is the whole point of its tool: when it fails, the tool says so.
  * @returns {Array<{ name: string, description: string, inputSchema: object, annotations: object, execute: (input: unknown) => object }>}
  */
-export function createTools({ catalog, now, showFilters, showListing }) {
+export function createTools({ catalog, now, showFilters, showListing, showDraft }) {
   const vocabulary = buildVocabulary(catalog);
   const categoryById = new Map(catalog.categories.map((c) => [c.id, c]));
+  const readListing = createListingReader(catalog);
+  const countryOfCity = new Map(catalog.listings.map((listing) => [listing.location.city, listing.location.country]));
+  const citiesByCountry = new Map(catalog.countries.map((country) => [country.code, []]));
+  for (const [city, country] of countryOfCity) citiesByCountry.get(country)?.push(city);
+  const draftValidValues = (field, draft) => {
+    if (field === "city") return citiesByCountry.get(draft.country) ?? vocabulary.city.values;
+    if (field === "languages") return vocabulary.language.values;
+    if (field === "hours") return [...catalog.WEEKDAYS];
+    return ["category", "providerType", "country", "priceUnit"].includes(field) ? vocabulary[field].values : undefined;
+  };
+  /** Every wrong field once, in the order of the form, each with an English message and its valid values. */
+  const draftErrors = (early, fromReader, draft) => {
+    const seen = new Set();
+    const formOrder = (error) => INPUT_FIELDS.indexOf(error.field.split(".")[0]);
+    return [...early, ...fromReader]
+      .filter(({ field }) => !seen.has(field) && seen.add(field))
+      .map(({ field, message }) => {
+        const error = { field, message: early.some((e) => e.field === field) ? message : field.startsWith("hours.") ? dayRule(field) : DRAFT_RULES[field] ?? `${field} is not valid.` };
+        const validValues = draftValidValues(field, draft);
+        return validValues ? { ...error, validValues } : error;
+      })
+      .sort((a, b) => formOrder(a) - formOrder(b));
+  };
   // Ids are "svc-" plus a number; hand-written ones are padded to 3 digits and generated ones to 5.
   // Look listings up by the number, so "svc-1", "svc-001" and "svc-00001" all find the same listing.
   // The page adds new listings to the end of catalog.listings, so the lookup takes in the new ones before it answers.
@@ -330,6 +468,81 @@ export function createTools({ catalog, now, showFilters, showListing }) {
       inputSchema: { type: "object", properties: {} },
       annotations,
       execute: safely(() => answer(filterOptions(catalog))),
+    },
+    {
+      name: "draft_service",
+      description: DRAFT_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string", minLength: LIMITS.title[0], maxLength: LIMITS.title[1], description: "Name of the service." },
+          category: { type: "string", enum: vocabulary.category.values, description: "Category id." },
+          description: { type: "string", minLength: LIMITS.description[0], maxLength: LIMITS.description[1], description: "What the provider does, for whom and where." },
+          tags: { type: "array", maxItems: LIMITS.tags, items: { type: "string", maxLength: LIMITS.tagLength }, description: "Optional search keywords. A comma inside a keyword splits it in two." },
+          providerName: { type: "string", minLength: LIMITS.providerName[0], maxLength: LIMITS.providerName[1], description: "Name of the person or the company." },
+          providerType: { type: "string", enum: vocabulary.providerType.values },
+          yearsExperience: { type: "integer", minimum: 0, maximum: LIMITS.yearsExperience },
+          phone: { type: "string", description: 'For example "+370 000 00000".' },
+          email: { type: "string", maxLength: LIMITS.emailLength },
+          country: { type: "string", enum: vocabulary.country.values, description: "Country code: LT, LV or EE." },
+          city: { type: "string", description: `One of the directory's cities in that country, e.g. ${vocabulary.city.values.slice(0, 4).join(", ")}. Accents are optional.` },
+          address: { type: "string", minLength: LIMITS.address[0], maxLength: LIMITS.address[1], description: "Street and house number." },
+          postalCode: { type: "string", description: Object.entries(POSTAL).map(([code, rule]) => `${code}: "${rule.example}"`).join(", ") + "." },
+          travelsToClient: { type: "boolean", description: "The provider comes to the client. Default false." },
+          radiusKm: { type: "integer", minimum: 1, maximum: LIMITS.radiusKm, description: "How far the provider travels. Required when travelsToClient is true." },
+          remote: { type: "boolean", description: "The service is also given remotely. Default false." },
+          priceFrom: { type: "number", exclusiveMinimum: 0, maximum: LIMITS.price, description: "Starting price in EUR." },
+          priceTo: { type: "number", exclusiveMinimum: 0, maximum: LIMITS.price, description: "Optional upper price in EUR, not lower than priceFrom." },
+          priceUnit: { type: "string", enum: vocabulary.priceUnit.values, description: "What the price is charged per." },
+          calloutFee: { type: "number", minimum: 0, maximum: LIMITS.calloutFee, description: "Optional call-out fee in EUR." },
+          negotiable: { type: "boolean", description: "The price can be negotiated. Default false." },
+          languages: { type: "array", minItems: 1, items: { type: "string", enum: vocabulary.language.values }, description: "Languages the provider speaks." },
+          hours: {
+            type: "object",
+            description: 'Weekly working hours in Europe/Vilnius time, e.g. { "mon": { "open": "09:00", "close": "18:00" } }. Leave a day out for a day off.',
+            properties: Object.fromEntries(
+              catalog.WEEKDAYS.map((day) => [
+                day,
+                {
+                  type: "object",
+                  properties: { open: { type: "string", description: "HH:MM" }, close: { type: "string", description: "HH:MM, later than open" } },
+                  required: ["open", "close"],
+                },
+              ]),
+            ),
+          },
+          leadTimeDays: { type: "integer", minimum: 0, maximum: LIMITS.leadTimeDays, description: "Days until work can start; 0 means today. Required unless emergency is true." },
+          emergency: { type: "boolean", description: "Round-the-clock emergency service. Default false." },
+        },
+        required: [
+          "title", "category", "description", "providerName", "providerType", "yearsExperience", "phone", "email",
+          "country", "city", "address", "postalCode", "priceFrom", "priceUnit", "languages", "hours",
+        ],
+      },
+      annotations: { readOnlyHint: false },
+      execute: safely((input) => {
+        const { draft, errors: early, warnings } = readDraftInput(input, vocabulary, catalog.WEEKDAYS);
+        const read = readListing(draft);
+        const errors = draftErrors(early, read.ok ? [] : read.errors, draft);
+        if (errors.length > 0) return answer({ error: errors[0], errors });
+
+        // Without the page effect there is no draft: say so instead of answering as if the form were open.
+        let shown;
+        try {
+          if (!showDraft) throw new Error("this page has no new-service form");
+          shown = showDraft(inputOfListing(read.listing));
+        } catch (error) {
+          console.warn("Could not show the draft on the page:", error);
+          return failure(null, "The page could not open the new-service form, so nothing was drafted. Try again, or ask the user to reload the page.");
+        }
+        const status = shown?.signedIn === true ? "awaiting_user" : "sign_in_required";
+        return answer({
+          status,
+          message: DRAFT_STATUS[status],
+          draft: draftRecord(read.listing, categoryById.get(read.listing.category)),
+          warnings,
+        });
+      }),
     },
   ];
 }

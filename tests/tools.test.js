@@ -1,40 +1,47 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTools, LIMIT_DEFAULT, LIMIT_MAX } from "../public/js/tools.js";
+import { createListingReader, INPUT_FIELDS } from "../public/js/listing-input.js";
 import * as catalog from "../public/js/data.js";
 
 const WED_1000 = new Date("2026-11-25T08:00:00Z"); // Wednesday 10:00 in Vilnius
 const WED_2100 = new Date("2026-11-25T19:00:00Z");
 
 function setup(overrides = {}) {
-  const calls = { showFilters: [], showListing: [] };
+  const calls = { showFilters: [], showListing: [], showDraft: [] };
   const clock = { now: WED_1000 };
+  const page = { signedIn: true };
   const tools = createTools({
     catalog,
     now: () => clock.now,
     showFilters: (filters) => calls.showFilters.push(filters),
     showListing: (id) => calls.showListing.push(id),
+    showDraft: (input) => {
+      calls.showDraft.push(input);
+      return { signedIn: page.signedIn };
+    },
     ...overrides,
   });
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
   return {
-    tools, calls, clock,
+    tools, calls, clock, page,
+    draft: (input) => byName.draft_service.execute(input),
     search: (input) => byName.search_services.execute(input),
     get: (input) => byName.get_service.execute(input),
     filters: (input) => byName.list_service_filters.execute(input),
   };
 }
 
-test("AC5.7 three tools with English names, descriptions, input schemas and the read-only hint", () => {
+test("AC5.7 four tools with English names, descriptions and input schemas; only the three that read have the read-only hint", () => {
   const { tools } = setup();
-  assert.deepEqual(tools.map((t) => t.name), ["search_services", "get_service", "list_service_filters"]);
+  assert.deepEqual(tools.map((t) => t.name), ["search_services", "get_service", "list_service_filters", "draft_service"]);
   for (const tool of tools) {
     assert.ok(tool.description.length > 40, `${tool.name} description`);
     assert.match(tool.description, /^[\x20-\x7E\n]+$/, `${tool.name} description is plain English text`);
     assert.match(tool.description, /fictional/i, `${tool.name} says the data is fictional`);
     assert.equal(tool.inputSchema.type, "object");
     assert.equal(typeof tool.inputSchema.properties, "object");
-    assert.deepEqual(tool.annotations, { readOnlyHint: true });
+    assert.deepEqual(tool.annotations, { readOnlyHint: tool.name !== "draft_service" });
     assert.equal(tool.outputSchema, undefined, `${tool.name} declares no outputSchema`);
     assert.equal(typeof tool.execute, "function");
   }
@@ -364,4 +371,234 @@ test("every answer can be serialised to JSON", () => {
   for (const answer of [t.search({ query: "valymas" }), t.get({ id: "svc-010" }), t.filters()]) {
     assert.doesNotThrow(() => JSON.parse(JSON.stringify(answer)));
   }
+});
+
+// ── draft_service ─────────────────────────────────────────────────────────
+
+// What an agent sends: numbers as numbers, tags as a list, a day off left out.
+const draftInput = (overrides = {}) => ({
+  title: "Dviračių remontas namuose",
+  category: "auto-repair",
+  description: "Taisau miesto ir kalnų dviračius kliento namuose arba savo dirbtuvėse Vilniuje.",
+  tags: ["dviračiai", "remontas"],
+  providerName: "Ratų Meistras",
+  providerType: "individual",
+  yearsExperience: 7,
+  phone: "+370 000 12345",
+  email: "labas@ratumeistras.example",
+  country: "LT",
+  city: "Vilnius",
+  address: "Bandomoji g. 301",
+  postalCode: "LT-01103",
+  travelsToClient: true,
+  radiusKm: 15,
+  priceFrom: 25,
+  priceUnit: "hour",
+  languages: ["lt", "en"],
+  hours: { mon: { open: "09:00", close: "18:00" }, tue: { open: "09:00", close: "18:00" }, fri: { open: "09:00", close: "17:00" } },
+  leadTimeDays: 2,
+  ...overrides,
+});
+
+test("draft_service fills the form, adds nothing and says that the user has to submit", () => {
+  const t = setup();
+  const before = catalog.listings.length;
+  const answer = t.draft(draftInput());
+
+  assert.equal(answer.error, undefined);
+  assert.equal(answer.status, "awaiting_user");
+  assert.match(answer.message, /Nothing is added until/);
+  assert.deepEqual(answer.warnings, []);
+  assert.deepEqual(answer.draft, {
+    category: "auto-repair",
+    categoryName: { lt: "Automobilių remontas", en: "Car repair" },
+    title: "Dviračių remontas namuose",
+    description: "Taisau miesto ir kalnų dviračius kliento namuose arba savo dirbtuvėse Vilniuje.",
+    tags: ["dviračiai", "remontas"],
+    provider: { name: "Ratų Meistras", type: "individual", yearsExperience: 7, verified: false },
+    contact: { phone: "+370 000 12345", email: "labas@ratumeistras.example" },
+    location: { country: "LT", city: "Vilnius", address: "Bandomoji g. 301", postalCode: "LT-01103" },
+    serviceArea: { travelsToClient: true, radiusKm: 15, remote: false },
+    price: { from: 25, to: null, unit: "hour", negotiable: false, calloutFee: null },
+    languages: ["lt", "en"],
+    availability: {
+      hours: { mon: ["09:00", "18:00"], tue: ["09:00", "18:00"], wed: null, thu: null, fri: ["09:00", "17:00"], sat: null, sun: null },
+      leadTimeDays: 2,
+      emergency: false,
+    },
+  });
+  assert.equal(answer.draft.id, undefined, "a draft has no id");
+  assert.equal(catalog.listings.length, before, "nothing is added to the catalog");
+  assert.equal(t.search({ query: "dviračių remontas" }).results.some((r) => r.title === "Dviračių remontas namuose"), false);
+  assert.equal(t.calls.showDraft.length, 1);
+});
+
+test("draft_service hands the page a form input that the form reads back to the same listing", () => {
+  const t = setup();
+  const answer = t.draft(draftInput({ priceTo: 40, calloutFee: 10, negotiable: true, remote: true }));
+  const [formInput] = t.calls.showDraft;
+  // As the page sends a filled-in form: strings in the text and number fields, booleans in the checkboxes.
+  assert.equal(formInput.yearsExperience, "7");
+  assert.equal(formInput.priceFrom, "25");
+  assert.equal(formInput.priceTo, "40");
+  assert.equal(formInput.tags, "dviračiai, remontas");
+  assert.equal(formInput.travelsToClient, true);
+  assert.deepEqual(formInput.hours.mon, { open: "09:00", close: "18:00" });
+  assert.equal(formInput.hours.sat, null);
+
+  const read = createListingReader(catalog)(formInput);
+  assert.equal(read.ok, true);
+  assert.deepEqual(read.listing.price, { from: 25, to: 40, unit: "hour", currency: "EUR", negotiable: true, calloutFee: 10 });
+  assert.deepEqual(read.listing.availability, answer.draft.availability);
+  assert.deepEqual(read.listing.tags, answer.draft.tags);
+  assert.deepEqual(read.listing.serviceArea, answer.draft.serviceArea);
+});
+
+test("draft_service says when the user has to sign in first, and still fills the form", () => {
+  const t = setup();
+  t.page.signedIn = false;
+  const answer = t.draft(draftInput());
+  assert.equal(answer.status, "sign_in_required");
+  assert.match(answer.message, /do not ask for the password/);
+  assert.equal(answer.draft.title, "Dviračių remontas namuose");
+  assert.equal(t.calls.showDraft.length, 1);
+});
+
+test("draft_service accepts known values in any case and spelling, as the search does", () => {
+  const t = setup();
+  const answer = t.draft(draftInput({
+    category: "Auto-Repair", country: "Latvia", city: "ryga", postalCode: "LV-1050", priceUnit: "HOUR",
+    providerType: "Company", languages: ["LV", "En"],
+  }));
+  assert.equal(answer.error, undefined);
+  assert.equal(answer.draft.category, "auto-repair");
+  assert.deepEqual(answer.draft.location, { country: "LV", city: "Rīga", address: "Bandomoji g. 301", postalCode: "LV-1050" });
+  assert.equal(answer.draft.price.unit, "hour");
+  assert.equal(answer.draft.provider.type, "company");
+  assert.deepEqual(answer.draft.languages, ["lv", "en"]);
+});
+
+test("draft_service returns every wrong field at once, in the order of the form, and leaves the page alone", () => {
+  const t = setup();
+  const answer = t.draft(draftInput({ title: "abc", category: "bikes", email: "nope", city: "Rīga", priceFrom: 0, languages: [] }));
+  assert.deepEqual(answer.errors.map((e) => e.field), ["title", "category", "email", "city", "priceFrom", "languages"]);
+  assert.deepEqual(answer.error, answer.errors[0]);
+  assert.equal(answer.status, undefined);
+  assert.equal(answer.draft, undefined);
+  assert.equal(answer.notice, "Fictional demo data");
+  assert.deepEqual(t.calls.showDraft, []);
+
+  const byField = Object.fromEntries(answer.errors.map((e) => [e.field, e]));
+  assert.match(byField.title.message, /5 to 100 characters/);
+  assert.equal(byField.title.validValues, undefined);
+  assert.deepEqual(byField.category.validValues, catalog.categories.map((c) => c.id));
+  assert.ok(byField.city.validValues.includes("Vilnius") && !byField.city.validValues.includes("Rīga"), "only the cities of the given country");
+  assert.deepEqual(byField.languages.validValues, ["lt", "lv", "et", "en", "ru"]);
+});
+
+test("draft_service explains every field the form reader can refuse in English", () => {
+  const t = setup();
+  const empty = t.draft({});
+  assert.deepEqual(empty.errors.map((e) => e.field), [
+    "title", "category", "description", "providerName", "providerType", "yearsExperience", "phone", "email",
+    "country", "city", "address", "priceFrom", "priceUnit", "languages", "hours", "leadTimeDays",
+  ]);
+  const more = t.draft(draftInput({
+    tags: Array(11).fill(0).map((_, i) => `tag${i}`), postalCode: "123", radiusKm: 0, priceTo: 5, calloutFee: -1,
+    hours: { mon: { open: "18:00", close: "09:00" }, tue: "09:00-18:00" },
+  }));
+  assert.deepEqual(more.errors.map((e) => e.field), ["tags", "postalCode", "radiusKm", "priceTo", "calloutFee", "hours.mon", "hours.tue"]);
+  for (const error of [...empty.errors, ...more.errors]) {
+    assert.match(error.message, /^[\x20-\x7E]+$/, `${error.field}: ${error.message}`);
+    assert.ok(error.message.startsWith(error.field), `${error.field}: ${error.message}`);
+    assert.doesNotMatch(error.message, /is not valid\.$/, `${error.field} has a rule of its own`);
+  }
+  assert.equal(t.draft(draftInput({ city: "Paris", country: "FR" })).errors.find((e) => e.field === "city").validValues.length, 13);
+});
+
+test("draft_service refuses what the form reader would let through in silence", () => {
+  const t = setup();
+  for (const field of ["travelsToClient", "remote", "negotiable", "emergency"]) {
+    for (const value of ["true", "false", 1, 0]) {
+      const answer = t.draft(draftInput({ [field]: value }));
+      assert.deepEqual(answer.errors.map((e) => e.field), [field], `${field}=${JSON.stringify(value)}`);
+      assert.match(answer.error.message, /boolean/);
+    }
+  }
+  const days = t.draft(draftInput({ hours: { monday: { open: "09:00", close: "18:00" }, tue: { open: "09:00", close: "18:00" } } }));
+  assert.deepEqual(days.errors.map((e) => e.field), ["hours"]);
+  assert.match(days.error.message, /monday/);
+  assert.deepEqual(days.error.validValues, ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+
+  assert.deepEqual(t.draft(draftInput({ tags: 5 })).errors.map((e) => e.field), ["tags"]);
+  assert.deepEqual(t.draft(draftInput({ tags: ["ok", 5] })).errors.map((e) => e.field), ["tags"]);
+  assert.deepEqual(t.calls.showDraft, []);
+});
+
+test("draft_service warns about input it did not use", () => {
+  const t = setup();
+  const answer = t.draft(draftInput({ website: "https://ratai.example", rating: 5, travelsToClient: false, emergency: true, leadTimeDays: 3 }));
+  assert.equal(answer.error, undefined);
+  assert.equal(answer.warnings.length, 3);
+  assert.match(answer.warnings[0], /website, rating/);
+  assert.match(answer.warnings[1], /radiusKm/);
+  assert.match(answer.warnings[2], /leadTimeDays/);
+  assert.deepEqual(answer.draft.serviceArea, { travelsToClient: false, radiusKm: 0, remote: false });
+  assert.equal(answer.draft.availability.leadTimeDays, 0);
+  assert.equal(answer.draft.provider.verified, false);
+  assert.equal(t.calls.showDraft[0].radiusKm, undefined, "the form keeps its own default distance");
+});
+
+test("draft_service takes a list of tags as the text a person would type into the form", () => {
+  const t = setup();
+  assert.deepEqual(t.draft(draftInput({ tags: ["a, b", " c "] })).draft.tags, ["a", "b", "c"]);
+  assert.deepEqual(t.draft(draftInput({ tags: "x; y" })).draft.tags, ["x", "y"]);
+  assert.deepEqual(t.draft(draftInput({ tags: undefined })).draft.tags, []);
+});
+
+test("draft_service says so when the page cannot show the form", () => {
+  for (const showDraft of [undefined, () => { throw new Error("no DOM"); }]) {
+    const t = setup({ showDraft });
+    const answer = t.draft(draftInput());
+    assert.equal(answer.error.field, null);
+    assert.match(answer.error.message, /nothing was drafted/);
+    assert.equal(answer.status, undefined);
+  }
+});
+
+test("draft_service treats arguments that are not an object as an empty form", () => {
+  const t = setup();
+  for (const input of [undefined, null, "abc", 5, []]) {
+    let answer;
+    assert.doesNotThrow(() => { answer = t.draft(input); });
+    assert.equal(answer.error.field, "title");
+  }
+});
+
+test("draft_service: every value its input schema offers is accepted, and the required fields are the ones the form needs", () => {
+  const t = setup();
+  const { properties, required } = t.tools[3].inputSchema;
+  assert.deepEqual(Object.keys(properties).sort(), [...INPUT_FIELDS].sort());
+  for (const field of ["category", "providerType", "priceUnit"]) {
+    for (const value of properties[field].enum) assert.equal(t.draft(draftInput({ [field]: value })).error, undefined, `${field}=${value}`);
+  }
+  for (const code of properties.languages.items.enum) assert.equal(t.draft(draftInput({ languages: [code] })).error, undefined, code);
+  assert.deepEqual(properties.country.enum, ["LT", "LV", "EE"]);
+  assert.deepEqual(Object.keys(properties.hours.properties), ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+  const bounds = { yearsExperience: [0, 70], radiusKm: [1, 500], priceFrom: [0.01, 25], priceTo: [25, 100000], calloutFee: [0, 1000], leadTimeDays: [0, 60] };
+  for (const [field, values] of Object.entries(bounds)) {
+    assert.ok(properties[field], field);
+    for (const value of values) assert.equal(t.draft(draftInput({ [field]: value })).error, undefined, `${field}=${value}`);
+  }
+  // Leaving out any required field is an error for that field; the optional ones can all be left out together.
+  for (const field of required) {
+    assert.equal(t.draft(draftInput({ [field]: undefined })).error?.field, field, field);
+  }
+  const optional = Object.keys(properties).filter((field) => !required.includes(field) && field !== "leadTimeDays");
+  assert.equal(t.draft(draftInput(Object.fromEntries(optional.map((field) => [field, undefined])))).error, undefined);
+});
+
+test("draft_service answers can be serialised to JSON", () => {
+  const t = setup();
+  for (const answer of [t.draft(draftInput()), t.draft({})]) assert.doesNotThrow(() => JSON.parse(JSON.stringify(answer)));
 });
