@@ -9,13 +9,11 @@ export const SORT_OPTIONS = ["relevance", "rating", "price_asc", "price_desc", "
 const MIXED_UNITS_WARNING =
   "Prices were compared across different units (per hour, job, m2, visit or day). Pass priceUnit to compare like with like.";
 
-// Search words per listing, built once per catalog.
+// Search words per listing, built once per catalog. The page adds a new listing to the end of catalog.listings,
+// so a search first indexes whatever has arrived since the last one.
 const indexes = new WeakMap();
 
-function indexOf(catalog) {
-  let index = indexes.get(catalog);
-  if (index) return index;
-
+function createIndex(catalog) {
   const categoryById = new Map((catalog.categories ?? []).map((category) => [category.id, category]));
   const countryByCode = new Map((catalog.countries ?? []).map((country) => [country.code, country]));
   const aliases = catalog.cityAliases ?? {};
@@ -30,7 +28,7 @@ function indexOf(catalog) {
     return cities.get(name);
   };
 
-  index = catalog.listings.map((listing) => {
+  const entryOf = (listing) => {
     const category = categoryById.get(listing.category);
     const country = countryByCode.get(listing.location.country);
     const city = cityOf(listing.location.city);
@@ -48,9 +46,19 @@ function indexOf(catalog) {
       ),
       cityKeys: city.keys,
     };
-  });
-  indexes.set(catalog, index);
-  return index;
+  };
+  return { entries: [], entryOf };
+}
+
+function indexOf(catalog) {
+  let index = indexes.get(catalog);
+  if (!index) {
+    index = createIndex(catalog);
+    indexes.set(catalog, index);
+  }
+  const { entries, entryOf } = index;
+  for (let i = entries.length; i < catalog.listings.length; i += 1) entries.push(entryOf(catalog.listings[i]));
+  return entries;
 }
 
 function score(entry, tokens) {

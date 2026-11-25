@@ -1,12 +1,17 @@
 // The page: one paged list of listings, a few controls, and the WebMCP tools wired to the same search.
 // All DOM is built with createElement and textContent, so text coming from an agent can never become markup.
 
-import * as catalog from "./catalog.js";
+import * as baseCatalog from "./catalog.js";
 import { computeAvailability } from "./availability.js";
 import { browserStorage, createAuth } from "./auth.js";
+import { createListingReader, WEEKDAY_LABEL } from "./listing-input.js";
 import { searchServices, SORT_OPTIONS } from "./search.js";
 import { createTools } from "./tools.js";
+import { createUserListings } from "./user-listings.js";
 import { registerTools } from "./webmcp.js";
+
+// The page's own copy of the catalog: the listings a person adds with the form are appended to its list.
+const catalog = { ...baseCatalog, listings: [...baseCatalog.listings] };
 
 const $ = (id) => document.getElementById(id);
 const dom = {
@@ -36,6 +41,41 @@ const dom = {
   loginPassword: $("login-password"),
   loginError: $("login-error"),
   loginCancel: $("login-cancel"),
+  loginReason: $("login-reason"),
+  addService: $("add-service"),
+  serviceDialog: $("service-dialog"),
+  serviceForm: $("service-form"),
+  serviceError: $("service-error"),
+  serviceCancel: $("service-cancel"),
+  serviceLanguages: $("s-languages"),
+  serviceHours: $("s-hours"),
+};
+
+// The fields of the new-service form, by the names the form reader uses.
+const serviceFields = {
+  title: $("s-title"),
+  category: $("s-category"),
+  description: $("s-description"),
+  tags: $("s-tags"),
+  providerName: $("s-provider-name"),
+  providerType: $("s-provider-type"),
+  yearsExperience: $("s-years"),
+  phone: $("s-phone"),
+  email: $("s-email"),
+  country: $("s-country"),
+  city: $("s-city"),
+  address: $("s-address"),
+  postalCode: $("s-postal"),
+  travelsToClient: $("s-travels"),
+  radiusKm: $("s-radius"),
+  remote: $("s-remote"),
+  priceFrom: $("s-price-from"),
+  priceTo: $("s-price-to"),
+  priceUnit: $("s-price-unit"),
+  calloutFee: $("s-callout"),
+  negotiable: $("s-negotiable"),
+  leadTimeDays: $("s-lead"),
+  emergency: $("s-emergency"),
 };
 
 const PAGE_SIZE = 10;
@@ -44,13 +84,15 @@ const categoryById = new Map(catalog.categories.map((c) => [c.id, c]));
 const countryByCode = new Map(catalog.countries.map((c) => [c.code, c]));
 const listingById = new Map(catalog.listings.map((l) => [l.id, l]));
 
-// Cities per country and the country of each city, worked out once: the catalog does not change.
+// Cities per country and the country of each city, worked out once: a new listing can only be in a city that is already here.
 const countryOfCity = new Map(catalog.listings.map((l) => [l.location.city, l.location.country]));
 const citiesByCountry = new Map(catalog.countries.map((country) => [country.code, []]));
 for (const [city, code] of countryOfCity) citiesByCountry.get(code).push(city);
 for (const cities of citiesByCountry.values()) cities.sort((a, b) => a.localeCompare(b, "lt"));
 
 const UNIT_LABEL = { hour: "val.", job: "darbas", m2: "m²", visit: "vizitas", day: "diena" };
+// The same units after "Kaina už" in the new-service form.
+const PRICE_FOR_LABEL = { hour: "valandą", job: "darbą", m2: "m²", visit: "vizitą", day: "dieną" };
 const LANGUAGE_LABEL = { lt: "lietuvių", lv: "latvių", et: "estų", en: "anglų", ru: "rusų" };
 const SORT_LABEL = {
   relevance: "Aktualumas",
@@ -66,6 +108,7 @@ const number = (value) => value.toLocaleString("lt-LT");
 let filters = {};
 let page = 1;
 let pinnedId = null;
+let pinnedLabel = "";
 
 function el(tag, options = {}, children = []) {
   const node = document.createElement(tag);
@@ -224,21 +267,24 @@ function card({ listing, availability }, { pinned = false } = {}) {
   const priceBox = el("div", { className: "price" }, [el("strong", { text: price.amount }), el("span", { text: price.unit })]);
   if (price.notes) priceBox.append(el("small", { text: price.notes }));
 
+  const badges = [el("span", { className: "badge", text: categoryById.get(listing.category)?.nameLt ?? listing.category })];
+  if (listing.addedBy !== undefined) badges.push(el("span", { className: "badge own", text: "Pridėta šioje naršyklėje" }));
+
+  // A listing that was just added has no reviews yet.
+  const { rating } = listing;
+  const ratingText = rating.count > 0 ? `★ ${number(rating.average)} (${number(rating.count)} atsiliepimai)` : "Atsiliepimų dar nėra";
+
   const attrs = { id: pinned ? "pinned-card" : `card-${listing.id}`, "data-id": listing.id };
   return el(pinned ? "div" : "li", { className: pinned ? "card highlight" : "card", attrs }, [
     el("div", { className: "card-head" }, [
-      el("div", { className: "card-title" }, [
-        el("span", { className: "badge", text: categoryById.get(listing.category)?.nameLt ?? listing.category }),
-        el("h2", { text: listing.title }),
-        providerLine,
-      ]),
+      el("div", { className: "card-title" }, [...badges, el("h2", { text: listing.title }), providerLine]),
       priceBox,
     ]),
     el("p", { className: "desc", text: listing.description }),
     el("dl", { className: "facts" }, [
       fact("Vieta", `${location.address}, ${location.city}, ${countryByCode.get(location.country)?.nameLt ?? location.country}`),
       fact("Užimtumas", ...availabilityParts),
-      fact("Įvertinimas", `★ ${number(listing.rating.average)} (${number(listing.rating.count)} atsiliepimai)`),
+      fact("Įvertinimas", ratingText),
       fact("Kontaktai", `${contact.phone} · ${contact.email}`),
       fact("Kalbos", listing.languages.map((code) => LANGUAGE_LABEL[code] ?? code).join(", ")),
       fact("Aptarnavimas", serviceAreaText(listing.serviceArea)),
@@ -261,7 +307,7 @@ function renderPinned(now) {
     render();
   });
   dom.pinned.replaceChildren(
-    el("div", { className: "pinned-head" }, [el("p", { text: "DI agento atidaryta paslauga" }), close]),
+    el("div", { className: "pinned-head" }, [el("p", { text: pinnedLabel }), close]),
     card({ listing, availability: computeAvailability(listing.availability, now) }, { pinned: true }),
   );
   dom.pinned.hidden = false;
@@ -324,6 +370,7 @@ function showListing(id) {
   const listing = listingById.get(id);
   if (!listing) return;
   pinnedId = id;
+  pinnedLabel = "DI agento atidaryta paslauga";
   render();
   dom.pinned.scrollIntoView({ block: "start", behavior: "smooth" });
   showNotice(`DI agentas atidarė paslaugą: ${listing.title}.`);
@@ -342,12 +389,19 @@ function renderAccount() {
   dom.signOut.hidden = !user;
 }
 
+// What to do once the person has signed in; set when the sign-in dialog was opened on the way to something else.
+let afterSignIn = null;
+
+function openLogin(next = null) {
+  afterSignIn = next;
+  dom.loginReason.hidden = next === null;
+  dom.loginForm.reset();
+  dom.loginError.hidden = true;
+  dom.loginDialog.showModal();
+}
+
 function bindAccount() {
-  dom.signIn.addEventListener("click", () => {
-    dom.loginForm.reset();
-    dom.loginError.hidden = true;
-    dom.loginDialog.showModal();
-  });
+  dom.signIn.addEventListener("click", () => openLogin());
   dom.loginCancel.addEventListener("click", () => dom.loginDialog.close());
   // The form has method="dialog": a submit that is not stopped closes the dialog and sends nothing anywhere.
   dom.loginForm.addEventListener("submit", (event) => {
@@ -361,22 +415,197 @@ function bindAccount() {
     dom.loginPassword.focus();
   });
   // The password does not stay in the page after the dialog closes, however it was closed.
-  dom.loginDialog.addEventListener("close", () => dom.loginForm.reset());
+  dom.loginDialog.addEventListener("close", () => {
+    dom.loginForm.reset();
+    const next = afterSignIn;
+    afterSignIn = null;
+    if (next && auth.currentUser()) next();
+  });
   dom.signOut.addEventListener("click", () => {
     auth.signOut();
     renderAccount();
     dom.signIn.focus();
   });
-  // Signing in or out in another tab of this site.
-  window.addEventListener("storage", renderAccount);
+  // Signing in or out, or adding a service, in another tab of this site.
+  window.addEventListener("storage", () => {
+    renderAccount();
+    const added = userListings.sync();
+    if (added.length > 0) {
+      adopt(added);
+      render();
+    }
+  });
+}
+
+// ── New service: a form for signed-in users; the listing stays in this browser ──
+
+const userListings = createUserListings({ catalog, read: createListingReader(catalog), storage: browserStorage() });
+
+function adopt(listings) {
+  for (const listing of listings) listingById.set(listing.id, listing);
+}
+
+// One row per weekday: a checkbox for "works that day" and the two times.
+const hourRows = new Map();
+
+function fillServiceForm() {
+  serviceFields.category.append(option("", "Pasirinkite kategoriją"), ...catalog.categories.map((c) => option(c.id, c.nameLt)));
+  serviceFields.country.append(...catalog.countries.map((c) => option(c.code, c.nameLt)));
+  serviceFields.priceUnit.append(...catalog.PRICE_UNITS.map((unit) => option(unit, PRICE_FOR_LABEL[unit] ?? unit)));
+
+  // Defaults are written as attributes, so that form.reset() brings them back.
+  dom.serviceLanguages.append(
+    ...catalog.LANGUAGES.map((code, index) => {
+      const attrs = { type: "checkbox", name: "languages", value: code };
+      if (index === 0) attrs.checked = "";
+      return el("label", { className: "check" }, [el("input", { attrs }), LANGUAGE_LABEL[code] ?? code]);
+    }),
+  );
+
+  for (const day of catalog.WEEKDAYS) {
+    const label = WEEKDAY_LABEL[day];
+    const worksAttrs = { type: "checkbox" };
+    if (day !== "sat" && day !== "sun") worksAttrs.checked = "";
+    const works = el("input", { attrs: worksAttrs });
+    const open = el("input", { attrs: { type: "time", value: "09:00", "aria-label": `${label}: dirbu nuo` } });
+    const close = el("input", { attrs: { type: "time", value: "18:00", "aria-label": `${label}: dirbu iki` } });
+    const row = el("div", { className: "hours-row" }, [el("label", { className: "check" }, [works, label]), open, "–", close]);
+    hourRows.set(day, { row, works, open, close });
+    dom.serviceHours.append(row);
+  }
+}
+
+function fillServiceCities() {
+  const cities = citiesByCountry.get(serviceFields.country.value) ?? [];
+  serviceFields.city.replaceChildren(option("", "Pasirinkite miestą"), ...cities.map((city) => option(city, city)));
+}
+
+/** Fields that depend on a checkbox are switched off while they do not apply. */
+function syncServiceForm() {
+  for (const { works, open, close } of hourRows.values()) {
+    open.disabled = !works.checked;
+    close.disabled = !works.checked;
+  }
+  serviceFields.radiusKm.disabled = !serviceFields.travelsToClient.checked;
+  serviceFields.leadTimeDays.disabled = serviceFields.emergency.checked;
+}
+
+/** The form as the input of the form reader in listing-input.js. */
+function serviceInput() {
+  const input = {};
+  for (const [name, field] of Object.entries(serviceFields)) input[name] = field.type === "checkbox" ? field.checked : field.value;
+  input.languages = [...dom.serviceLanguages.querySelectorAll("input:checked")].map((box) => box.value);
+  input.hours = {};
+  for (const [day, { works, open, close }] of hourRows) input.hours[day] = works.checked ? { open: open.value, close: close.value } : null;
+  return input;
+}
+
+/** Where an error of a field is shown: the control that gets marked and the box the message is added to. */
+function serviceErrorPlace(field) {
+  if (field === "languages") return { control: dom.serviceLanguages.querySelector("input"), box: dom.serviceLanguages };
+  if (field === "hours") return { control: hourRows.values().next().value.works, box: dom.serviceHours };
+  if (field.startsWith("hours.")) {
+    const row = hourRows.get(field.slice("hours.".length));
+    return row ? { control: row.open, box: row.row } : undefined;
+  }
+  const control = serviceFields[field];
+  return control ? { control, box: control.closest(".field") } : undefined;
+}
+
+function clearFieldError(control) {
+  const messageId = control.getAttribute("aria-describedby");
+  if (messageId) document.getElementById(messageId)?.remove();
+  control.removeAttribute("aria-describedby");
+  control.removeAttribute("aria-invalid");
+}
+
+function clearServiceErrors() {
+  for (const control of dom.serviceForm.querySelectorAll("[aria-invalid]")) clearFieldError(control);
+  dom.serviceError.hidden = true;
+  dom.serviceError.textContent = "";
+}
+
+function showServiceErrors(errors, summary) {
+  clearServiceErrors();
+  let first;
+  for (const { field, message } of errors) {
+    const place = serviceErrorPlace(field);
+    if (!place) continue;
+    const messageId = `s-error-${field.replace(".", "-")}`;
+    place.box.append(el("p", { className: "field-error", text: message, attrs: { id: messageId } }));
+    place.control.setAttribute("aria-invalid", "true");
+    place.control.setAttribute("aria-describedby", messageId);
+    first ??= place.control;
+  }
+  dom.serviceError.textContent = summary ?? `Paslauga nepridėta. Pataisykite pažymėtus laukus: ${number(errors.length)}.`;
+  dom.serviceError.hidden = false;
+  first?.focus();
+}
+
+function openServiceForm() {
+  if (!auth.currentUser()) {
+    openLogin(openServiceForm);
+    return;
+  }
+  dom.serviceDialog.showModal();
+}
+
+function bindServiceForm() {
+  // What was typed stays in the form when it is cancelled; it is emptied only after the service is added.
+  dom.addService.addEventListener("click", openServiceForm);
+  dom.serviceCancel.addEventListener("click", () => dom.serviceDialog.close());
+  serviceFields.country.addEventListener("change", fillServiceCities);
+  dom.serviceForm.addEventListener("change", syncServiceForm);
+  dom.serviceForm.addEventListener("input", (event) => {
+    if (event.target.hasAttribute?.("aria-invalid")) clearFieldError(event.target);
+  });
+
+  // The form has method="dialog": a submit that is not stopped closes the dialog and sends nothing anywhere.
+  dom.serviceForm.addEventListener("submit", (event) => {
+    const user = auth.currentUser();
+    if (!user) {
+      event.preventDefault();
+      showServiceErrors([], "Esate atsijungę. Uždarykite formą ir prisijunkite iš naujo: įvesti duomenys išliks.");
+      return;
+    }
+    const result = userListings.add(serviceInput(), user.username);
+    if (!result.ok) {
+      event.preventDefault();
+      showServiceErrors(result.errors);
+      return;
+    }
+
+    const { listing } = result;
+    adopt([listing]);
+    dom.serviceForm.reset();
+    clearServiceErrors();
+    fillServiceCities();
+    syncServiceForm();
+
+    pinnedId = listing.id;
+    pinnedLabel = "Jūsų pridėta paslauga";
+    render();
+    showNotice(
+      result.saved
+        ? `Paslauga pridėta: ${listing.title} (${listing.id}). Ji saugoma tik šioje naršyklėje.`
+        : `Paslauga pridėta: ${listing.title} (${listing.id}), bet naršyklė neleido jos išsaugoti: perkrovus puslapį ji dings.`,
+    );
+    // Closing the dialog puts the focus back on the button in the header; scroll to the new listing after that.
+    dom.serviceDialog.addEventListener("close", () => dom.pinned.scrollIntoView({ block: "start" }), { once: true });
+  });
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────
 
 fillStaticControls();
+fillServiceForm();
+fillServiceCities();
+syncServiceForm();
 bindControls();
 bindAccount();
+bindServiceForm();
 renderAccount();
+adopt(userListings.sync());
 render();
 
 // "Dirba dabar" depends on the clock, so refresh once a minute while the page is visible.

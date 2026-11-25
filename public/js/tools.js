@@ -228,7 +228,7 @@ Prices are in EUR and are the advertised starting price. Call-out fees are retur
 
 openNow means the provider is inside working hours right now (Europe/Vilnius time) and can be phoned; it says nothing about free capacity. availableWithinDays is about when work can start: 0 means today.
 
-Returns { notice, currency, timeZone, total, returned, offset, appliedFilters, warnings, results }. Each result has id, title, titleEn, category, provider, location (country, city, address), price (from, to, unit, negotiable, calloutFee), rating, contact (phone, email), availability (openNow, todayHours, nextFreeDate, emergency) and descriptionEn. "total" counts all matches; page with limit and offset. Use get_service with an id for the full record. Invalid input returns { error: { field, message, validValues } } instead of results. The list shown on the page is filtered the same way and opens at the page that holds the returned results.`;
+Returns { notice, currency, timeZone, total, returned, offset, appliedFilters, warnings, results }. Each result has id, title, titleEn, category, provider, location (country, city, address), price (from, to, unit, negotiable, calloutFee), rating, contact (phone, email), availability (openNow, todayHours, nextFreeDate, emergency) and descriptionEn. "total" counts all matches; page with limit and offset. Use get_service with an id for the full record. A listing that a visitor added with the form on the page has no reviews yet: its rating is { average: 0, count: 0 }, minRating leaves it out, and its titleEn and descriptionEn repeat the text as it was typed. Invalid input returns { error: { field, message, validValues } } instead of results. The list shown on the page is filtered the same way and opens at the page that holds the returned results.`;
 
 const GET_DESCRIPTION = `Get the full record of one service listing by id (for example "svc-001"; ids come from search_services). All data is fictional demo data.
 
@@ -250,7 +250,16 @@ export function createTools({ catalog, now, showFilters, showListing }) {
   const categoryById = new Map(catalog.categories.map((c) => [c.id, c]));
   // Ids are "svc-" plus a number; hand-written ones are padded to 3 digits and generated ones to 5.
   // Look listings up by the number, so "svc-1", "svc-001" and "svc-00001" all find the same listing.
-  const listingByNumber = new Map(catalog.listings.map((l) => [Number(l.id.slice(4)), l]));
+  // The page adds new listings to the end of catalog.listings, so the lookup takes in the new ones before it answers.
+  const listingByNumber = new Map();
+  let indexed = 0;
+  const findListing = (number) => {
+    for (; indexed < catalog.listings.length; indexed += 1) {
+      const listing = catalog.listings[indexed];
+      listingByNumber.set(Number(listing.id.slice(4)), listing);
+    }
+    return listingByNumber.get(number);
+  };
   const annotations = { readOnlyHint: true };
 
   return [
@@ -306,7 +315,7 @@ export function createTools({ catalog, now, showFilters, showListing }) {
           throw new InputError("id", 'id is required and must be a string such as "svc-001".');
         }
         const idNumber = /^svc-(\d{1,9})$/i.exec(args.id.trim())?.[1];
-        const listing = idNumber === undefined ? undefined : listingByNumber.get(Number(idNumber));
+        const listing = idNumber === undefined ? undefined : findListing(Number(idNumber));
         if (!listing) {
           throw new InputError("id", `No listing has the id "${args.id.trim().slice(0, 40)}". Use search_services to find ids.`);
         }

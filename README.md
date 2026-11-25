@@ -1,9 +1,11 @@
 # WebMCP services directory (demo)
 
 A one-page services directory in the style of paslaugos.lt, with 10,000 fictional providers from Lithuania, Latvia and Estonia.
-AI agents search it through three WebMCP tools. The site is read-only and has no backend; the only form is a demo sign-in.
+AI agents search it through three WebMCP tools. The site has no backend. It has two forms: a demo sign-in, and a form
+that adds a service and keeps it in the visitor's own browser.
 
-**All data is invented.** Emails and websites use the reserved `.example` domain, and phone numbers start with `000`, which no Baltic operator assigns.
+**All shipped data is invented.** Emails and websites use the reserved `.example` domain, and phone numbers start with `000`, which no Baltic operator assigns.
+A service added with the form holds whatever its author typed; it never leaves that browser.
 
 ## Run
 
@@ -43,12 +45,36 @@ The header has a **Prisijungti** button that opens a sign-in dialog. Two demo us
 
 - This is a demo sign-in, not security. The user list is in `public/js/auth.js`, which the browser downloads, and the
   check runs in the page. It tells the page who is using it and protects nothing. Never put a real password there.
-- Signing in changes only the header: it shows the user's name and an **Atsijungti** button. The directory and the
-  WebMCP tools work the same signed in or out.
+- Signing in changes the header: it shows the user's name and an **Atsijungti** button. It is also needed to add a
+  service (see below). The directory and the WebMCP tools work the same signed in or out.
 - The username ignores case and surrounding spaces; the password must match exactly.
 - The signed-in username (never the password) is kept in `localStorage` under `webmcp-services.user`, so it survives a
   reload and is shared by all tabs of the site. Where `localStorage` is blocked, sign-in lasts until the reload.
 - The form has `method="dialog"` and no `action`, so nothing is sent anywhere and the fields never reach the address bar.
+
+## Adding a service
+
+The header has a **Pridėti paslaugą** button that opens the new-service form. A signed-out visitor gets the sign-in
+dialog first and the form right after signing in.
+
+- There is no backend, so a new service is kept in `localStorage` under `webmcp-services.listings`. It is visible only in
+  that browser, in all tabs of the site, and survives a reload. Clearing the site data removes it; the page has no
+  button to edit or delete a service yet.
+- A new service is a normal listing: the list, the filters and the three tools find it. It gets the next free id
+  (`svc-10001`, `svc-10002`, ...), a **Pridėta šioje naršyklėje** badge, and is shown highlighted above the list right
+  after it is added.
+- It has no reviews: `rating` is `{ average: 0, count: 0 }`, so it sorts after the rated listings and `minRating` leaves
+  it out. It is never `verified`. The form asks for one language only, so `titleEn` and `descriptionEn` repeat the text
+  as typed.
+- The city is chosen from the cities the catalog already has, so the city filter and the tool vocabulary do not change.
+- The fields are checked by `js/listing-input.js`, with messages in Lithuanian under each wrong field. The browser's own
+  validation is off (`novalidate`). A decimal comma is accepted in prices; a postal code may be typed without the
+  country prefix (`08318` becomes `LT-08318`).
+- What is stored is the form input, not the finished listing. Every page load reads it through the same checks, so a
+  damaged or hand-edited entry is skipped instead of breaking the page.
+- Where `localStorage` is blocked or full, the service is added until the reload and the page says so.
+- Like the sign-in, the form has `method="dialog"` and no `action`: nothing is sent anywhere.
+- A form that is cancelled keeps what was typed; it is emptied after the service is added.
 
 ## Tools
 
@@ -85,11 +111,15 @@ public/
   js/tools.js                 createTools({ catalog, now, showFilters, showListing })
   js/webmcp.js                registerTools(tools)
   js/auth.js                  two demo users, createAuth({ storage }): signIn, signOut, currentUser
+  js/listing-input.js         createListingReader(catalog): form values in, a listing or a list of errors out
+  js/user-listings.js         createUserListings({ catalog, read, storage }): sync, add; added listings in localStorage
   js/app.js                   page rendering and wiring
 tests/                        one file per module, plus page.test.js for index.html rules
 ```
 
 The page and the tools call the same `searchServices`, so a tool answer and the visible list agree.
+The page works on its own copy of the catalog and appends added services to it; the search index and the tools' id
+lookup take in whatever was appended since their last call.
 Availability is computed from the current time on every call, so the data does not go stale.
 
 ## Data

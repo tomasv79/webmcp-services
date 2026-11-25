@@ -16,6 +16,7 @@
   --agent-bg: #e8ecff;
   --agent-text: #1f2a6b;
   --highlight: #f2a900;
+  --error: #b3261e;
   --radius: 10px;
 }
 
@@ -37,6 +38,7 @@
     --agent-bg: #232b55;
     --agent-text: #d5dbff;
     --highlight: #ffc533;
+    --error: #ff8a80;
   }
 }
 
@@ -91,6 +93,7 @@ main,
 
 .account {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-top: 6px;
@@ -103,7 +106,8 @@ main,
 }
 
 .account button,
-.login-actions button {
+.dialog-actions button {
+  white-space: nowrap;
   padding: 8px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -113,44 +117,46 @@ main,
   cursor: pointer;
 }
 
-.login-actions button.primary {
+.account button.primary,
+.dialog-actions button.primary {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--surface);
   font-weight: 600;
 }
 
-.login {
-  width: min(360px, calc(100vw - 32px));
+.dialog {
   padding: 20px;
+  /* Scrolling past the end of a long form does not move the page behind it. */
+  overscroll-behavior: contain;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
 }
 
-.login::backdrop {
+.dialog::backdrop {
   background: rgb(0 0 0 / 0.45);
 }
 
-.login form {
+.dialog form {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.login h2 {
+.dialog h2 {
   margin: 0;
   font-size: 1.25rem;
 }
 
-.login-note {
+.dialog-note {
   margin: 0;
   color: var(--muted);
   font-size: 0.85rem;
 }
 
-.login-error {
+.dialog-error {
   margin: 0;
   padding: 8px 10px;
   border-radius: 8px;
@@ -159,11 +165,79 @@ main,
   font-size: 0.9rem;
 }
 
-.login-actions {
+.dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+.login {
+  width: min(360px, calc(100vw - 32px));
+}
+
+.login-reason {
+  margin: 0;
+  font-weight: 600;
+}
+
+.service {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+  margin: 4px 0 0;
+  padding: 12px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.group legend {
+  padding: 0 8px 0 0;
+  font-weight: 600;
+}
+
+.optional {
+  font-weight: 400;
+}
+
+.checks,
+.hours {
+  grid-column: 1 / -1;
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.hours {
+  display: grid;
+  gap: 8px;
+}
+
+.hours-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.hours-row .check {
+  width: 150px;
+}
+
+.field-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--error);
+  font-size: 0.8rem;
 }
 
 .controls {
@@ -196,8 +270,9 @@ main,
 }
 
 .field input,
-.field select {
-  width: 100%;
+.field select,
+.field textarea,
+.hours-row input[type="time"] {
   padding: 9px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -206,8 +281,29 @@ main,
   font: inherit;
 }
 
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.dialog :disabled {
+  opacity: 0.5;
+}
+
+.dialog [aria-invalid="true"] {
+  border-color: var(--error);
+  outline-color: var(--error);
+}
+
 .field input:focus-visible,
 .field select:focus-visible,
+.field textarea:focus-visible,
+.hours-row input:focus-visible,
 button:focus-visible,
 .check input:focus-visible {
   outline: 2px solid var(--accent);
@@ -345,12 +441,18 @@ button:focus-visible,
 
 .badge {
   display: inline-block;
+  margin-right: 6px;
   padding: 2px 8px;
   border-radius: 6px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+.badge.own {
+  background: var(--agent-bg);
+  color: var(--agent-text);
 }
 
 .provider {
@@ -508,6 +610,14 @@ button:focus-visible,
 @media (max-width: 720px) {
   .controls {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .group {
+    grid-template-columns: 1fr;
+  }
+
+  .hours-row .check {
+    width: 100%;
   }
 
   .facts {

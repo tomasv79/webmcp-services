@@ -86,11 +86,11 @@ test("AC8.2 the vendored polyfill is unchanged and ships with its licence", () =
   assert.match(read("vendor/LICENSE-webmcp-polyfill.txt"), /Apache License\s+Version 2\.0/);
 });
 
-test("AC1.4 and AC1.5 the page has a demo banner, no outside links and no form except the sign-in", () => {
+test("AC1.4 and AC1.5 the page has a demo banner, no outside links and no form except the sign-in and the new service", () => {
   assert.match(html, /<html lang="lt">/);
   assert.match(html, /<meta charset="utf-8">/);
   assert.match(html, /id="demo-banner"[^>]*>[^<]*išgalvot/);
-  assert.deepEqual(tags("form").map((form) => form.attrs.id), ["login-form"]);
+  assert.deepEqual(tags("form").map((form) => form.attrs.id), ["login-form", "service-form"]);
   assert.doesNotMatch(html, /<a\b/i);
   assert.doesNotMatch(html, /<iframe\b/i);
 });
@@ -134,6 +134,44 @@ test("login: the demo passwords are only in auth.js and the README", () => {
       assert.ok(!read(`js/${file}`).includes(user.password), `js/${file}`);
     }
   }
+});
+
+test("new service: the form sends nothing anywhere and sits in a dialog", () => {
+  const form = tags("form").find((tag) => tag.attrs.id === "service-form");
+  assert.equal(form.attrs.method, "dialog");
+  assert.equal(form.attrs.action, undefined);
+  // The script checks the fields and shows the messages in Lithuanian, so the browser's own check is off.
+  assert.equal(form.attrs.novalidate, "");
+  const dialogStart = html.indexOf('<dialog id="service-dialog"');
+  const dialogEnd = html.indexOf("</dialog>", dialogStart);
+  assert.ok(dialogStart !== -1 && dialogStart < form.index && form.index < dialogEnd, "the form is inside #service-dialog");
+  assert.match(html.slice(dialogStart, dialogEnd), /tik šioje naršyklėje/, "the form says where the listing is kept");
+});
+
+test("new service: the page has every element the script expects, and a label for every field", () => {
+  const appSource = read("js/app.js");
+  const ids = [...appSource.matchAll(/\$\("([^"]+)"\)/g)].map((m) => m[1]);
+  for (const id of ["add-service", "service-dialog", "service-form", "service-error", "service-cancel", "s-languages", "s-hours", "login-reason"]) {
+    assert.ok(ids.includes(id), `app.js uses #${id}`);
+  }
+  for (const id of ids) assert.equal(html.split(`id="${id}"`).length - 1, 1, `#${id} is in the page once`);
+  for (const id of ids.filter((name) => /^s-(?!languages$|hours$)/.test(name))) {
+    assert.match(html, new RegExp(`<label[^>]*\\sfor="${id}"`), `#${id} has a label`);
+  }
+  for (const id of ["service-error", "login-reason"]) {
+    assert.match(html, new RegExp(`<[^>]*id="${id}"[^>]*\\shidden[\\s>]`), `#${id} starts hidden`);
+  }
+});
+
+test("new service: the form reader knows every field of the form, by the same name", async () => {
+  const { INPUT_FIELDS } = await import("../public/js/listing-input.js");
+  const dialogStart = html.indexOf('<dialog id="service-dialog"');
+  const dialog = html.slice(dialogStart, html.indexOf("</dialog>", dialogStart));
+  const names = [...dialog.matchAll(/\sname="([^"]+)"/g)].map((m) => m[1]);
+  // Languages and working hours are built by the script from the catalog.
+  assert.deepEqual([...names, "languages", "hours"].sort(), [...INPUT_FIELDS].sort());
+  const appSource = read("js/app.js");
+  for (const name of names) assert.match(appSource, new RegExp(`\\b${name}: \\$\\("s-`), `app.js reads ${name}`);
 });
 
 test("AC1.2 and AC1.3 the page has the controls the script expects", () => {

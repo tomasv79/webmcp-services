@@ -19,6 +19,7 @@
         <p>Meistrai ir paslaugų teikėjai Lietuvoje, Latvijoje ir Estijoje</p>
       </div>
       <div class="account">
+        <button id="add-service" class="primary" type="button">Pridėti paslaugą</button>
         <p id="account-user" class="account-user" aria-live="polite" hidden></p>
         <button id="sign-in" type="button" hidden>Prisijungti</button>
         <button id="sign-out" type="button" hidden>Atsijungti</button>
@@ -26,10 +27,11 @@
     </header>
 
     <!-- Demo sign-in, checked in the browser. method="dialog" keeps the fields out of the address bar. -->
-    <dialog id="login-dialog" class="login" aria-labelledby="login-title">
+    <dialog id="login-dialog" class="dialog login" aria-labelledby="login-title">
       <form id="login-form" method="dialog">
         <h2 id="login-title">Prisijungimas</h2>
-        <p class="login-note">Demonstracinis prisijungimas. Neveskite tikrų slaptažodžių.</p>
+        <p id="login-reason" class="login-reason" hidden>Norėdami pridėti paslaugą, prisijunkite.</p>
+        <p class="dialog-note">Demonstracinis prisijungimas. Neveskite tikrų slaptažodžių.</p>
         <div class="field">
           <label for="login-username">Naudotojo vardas</label>
           <input id="login-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="50" required>
@@ -38,10 +40,145 @@
           <label for="login-password">Slaptažodis</label>
           <input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="100" required>
         </div>
-        <p id="login-error" class="login-error" role="alert" hidden>Neteisingas naudotojo vardas arba slaptažodis.</p>
-        <div class="login-actions">
+        <p id="login-error" class="dialog-error" role="alert" hidden>Neteisingas naudotojo vardas arba slaptažodis.</p>
+        <div class="dialog-actions">
           <button id="login-cancel" type="button">Atšaukti</button>
           <button id="login-submit" class="primary" type="submit">Prisijungti</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- New service. Nothing is sent anywhere: the script checks the fields and keeps the listing in this browser's localStorage. -->
+    <dialog id="service-dialog" class="dialog service" aria-labelledby="service-title">
+      <form id="service-form" method="dialog" novalidate>
+        <h2 id="service-title">Nauja paslauga</h2>
+        <p class="dialog-note">Demonstracija: paslauga išsaugoma tik šioje naršyklėje ir niekur nesiunčiama. Neveskite tikrų asmens duomenų.</p>
+
+        <fieldset class="group">
+          <legend>Paslauga</legend>
+          <div class="field field-wide">
+            <label for="s-title">Pavadinimas</label>
+            <input id="s-title" name="title" type="text" autocomplete="off" maxlength="100" required>
+          </div>
+          <div class="field">
+            <label for="s-category">Kategorija</label>
+            <select id="s-category" name="category" required></select>
+          </div>
+          <div class="field">
+            <label for="s-tags">Raktažodžiai <span class="optional">(neprivaloma, per kablelį)</span></label>
+            <input id="s-tags" name="tags" type="text" autocomplete="off" maxlength="330" placeholder="pvz., santechnikas, vamzdžiai">
+          </div>
+          <div class="field field-wide">
+            <label for="s-description">Aprašymas</label>
+            <textarea id="s-description" name="description" rows="4" maxlength="1000" required></textarea>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Teikėjas</legend>
+          <div class="field field-wide">
+            <label for="s-provider-name">Vardas arba įmonės pavadinimas</label>
+            <input id="s-provider-name" name="providerName" type="text" autocomplete="off" maxlength="80" required>
+          </div>
+          <div class="field">
+            <label for="s-provider-type">Tipas</label>
+            <select id="s-provider-type" name="providerType" required>
+              <option value="individual" selected>Privatus meistras</option>
+              <option value="company">Įmonė</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="s-years">Patirtis, metais</label>
+            <input id="s-years" name="yearsExperience" type="number" inputmode="numeric" min="0" max="70" step="1" required>
+          </div>
+          <div class="field">
+            <label for="s-phone">Telefonas</label>
+            <input id="s-phone" name="phone" type="tel" autocomplete="off" maxlength="24" placeholder="+370 000 00000" required>
+          </div>
+          <div class="field">
+            <label for="s-email">El. paštas</label>
+            <input id="s-email" name="email" type="email" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="100" placeholder="vardas@imone.example" required>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Vieta</legend>
+          <div class="field">
+            <label for="s-country">Šalis</label>
+            <select id="s-country" name="country" required></select>
+          </div>
+          <div class="field">
+            <label for="s-city">Miestas</label>
+            <select id="s-city" name="city" required></select>
+          </div>
+          <div class="field">
+            <label for="s-address">Adresas</label>
+            <input id="s-address" name="address" type="text" autocomplete="off" maxlength="120" placeholder="Gatvė ir namo numeris" required>
+          </div>
+          <div class="field">
+            <label for="s-postal">Pašto kodas</label>
+            <input id="s-postal" name="postalCode" type="text" autocomplete="off" maxlength="10" required>
+          </div>
+          <label class="check" for="s-travels">
+            <input id="s-travels" name="travelsToClient" type="checkbox" checked>
+            Atvykstu pas klientą
+          </label>
+          <div class="field">
+            <label for="s-radius">Atvykimo atstumas, km</label>
+            <input id="s-radius" name="radiusKm" type="number" inputmode="numeric" min="1" max="500" step="1" value="20">
+          </div>
+          <label class="check" for="s-remote">
+            <input id="s-remote" name="remote" type="checkbox">
+            Paslauga teikiama ir nuotoliu
+          </label>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Kaina, EUR</legend>
+          <div class="field">
+            <label for="s-price-from">Kaina nuo</label>
+            <input id="s-price-from" name="priceFrom" type="number" inputmode="decimal" min="0.01" max="100000" step="0.01" required>
+          </div>
+          <div class="field">
+            <label for="s-price-to">Kaina iki <span class="optional">(neprivaloma)</span></label>
+            <input id="s-price-to" name="priceTo" type="number" inputmode="decimal" min="0.01" max="100000" step="0.01">
+          </div>
+          <div class="field">
+            <label for="s-price-unit">Kaina už</label>
+            <select id="s-price-unit" name="priceUnit" required></select>
+          </div>
+          <div class="field">
+            <label for="s-callout">Iškvietimo mokestis <span class="optional">(neprivaloma)</span></label>
+            <input id="s-callout" name="calloutFee" type="number" inputmode="decimal" min="0" max="1000" step="0.01">
+          </div>
+          <label class="check" for="s-negotiable">
+            <input id="s-negotiable" name="negotiable" type="checkbox">
+            Kaina derinama
+          </label>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Kalbos</legend>
+          <div id="s-languages" class="checks"></div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Darbo laikas</legend>
+          <div id="s-hours" class="hours"></div>
+          <div class="field">
+            <label for="s-lead">Per kiek dienų galite pradėti</label>
+            <input id="s-lead" name="leadTimeDays" type="number" inputmode="numeric" min="0" max="60" step="1" value="0">
+          </div>
+          <label class="check" for="s-emergency">
+            <input id="s-emergency" name="emergency" type="checkbox">
+            Avarinė tarnyba visą parą
+          </label>
+        </fieldset>
+
+        <p id="service-error" class="dialog-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button id="service-cancel" type="button">Atšaukti</button>
+          <button id="service-submit" class="primary" type="submit">Pridėti paslaugą</button>
         </div>
       </form>
     </dialog>
