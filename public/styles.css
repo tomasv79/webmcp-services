@@ -69,6 +69,11 @@ main,
 }
 
 .site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 24px;
   padding-top: 28px;
   padding-bottom: 8px;
 }
@@ -82,6 +87,83 @@ main,
 .site-header p {
   margin: 4px 0 0;
   color: var(--muted);
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.site-header .account-user {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.account button,
+.login-actions button {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.login-actions button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.login {
+  width: min(360px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.login::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.login form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.login-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.login-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 0.9rem;
+}
+
+.login-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .controls {

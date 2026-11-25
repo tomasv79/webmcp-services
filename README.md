@@ -1,7 +1,7 @@
 # WebMCP services directory (demo)
 
 A one-page services directory in the style of paslaugos.lt, with 10,000 fictional providers from Lithuania, Latvia and Estonia.
-AI agents search it through three WebMCP tools. The site is read-only: no accounts, no forms, no backend.
+AI agents search it through three WebMCP tools. The site is read-only and has no backend; the only form is a demo sign-in.
 
 **All data is invented.** Emails and websites use the reserved `.example` domain, and phone numbers start with `000`, which no Baltic operator assigns.
 
@@ -31,6 +31,24 @@ No install step: the tests use Node's built-in runner (Node 22 or newer). Run th
 ```bash
 TZ=America/New_York npm test
 ```
+
+## Sign-in
+
+The header has a **Prisijungti** button that opens a sign-in dialog. Two demo users exist:
+
+| Username | Password | Shown as |
+|---|---|---|
+| `jonas` | `jonas123` | Jonas Jonaitis |
+| `ona` | `ona123` | Ona Onaitė |
+
+- This is a demo sign-in, not security. The user list is in `public/js/auth.js`, which the browser downloads, and the
+  check runs in the page. It tells the page who is using it and protects nothing. Never put a real password there.
+- Signing in changes only the header: it shows the user's name and an **Atsijungti** button. The directory and the
+  WebMCP tools work the same signed in or out.
+- The username ignores case and surrounding spaces; the password must match exactly.
+- The signed-in username (never the password) is kept in `localStorage` under `webmcp-services.user`, so it survives a
+  reload and is shared by all tabs of the site. Where `localStorage` is blocked, sign-in lasts until the reload.
+- The form has `method="dialog"` and no `action`, so nothing is sent anywhere and the fields never reach the address bar.
 
 ## Tools
 
@@ -66,6 +84,7 @@ public/
   js/search.js                searchServices(catalog, filters, now)
   js/tools.js                 createTools({ catalog, now, showFilters, showListing })
   js/webmcp.js                registerTools(tools)
+  js/auth.js                  two demo users, createAuth({ storage }): signIn, signOut, currentUser
   js/app.js                   page rendering and wiring
 tests/                        one file per module, plus page.test.js for index.html rules
 ```

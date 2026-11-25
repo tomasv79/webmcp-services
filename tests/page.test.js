@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
 const read = (path) => readFileSync(join(publicDir, path), "utf8");
 const html = read("index.html");
+const authModule = await import("../public/js/auth.js");
 
 const RELAY_URL = "https://cdn.jsdelivr.net/npm/@mcp-b/webmcp-local-relay@6.2.0/dist/browser/embed.js";
 const POLYFILL_SHA256 = "e6d042e734e1dd08a455f249936ab045575c19fddf860f7e120a0dcaf350f05c";
@@ -85,13 +86,54 @@ test("AC8.2 the vendored polyfill is unchanged and ships with its licence", () =
   assert.match(read("vendor/LICENSE-webmcp-polyfill.txt"), /Apache License\s+Version 2\.0/);
 });
 
-test("AC1.4 and AC1.5 the page has a demo banner and no forms or outside links", () => {
+test("AC1.4 and AC1.5 the page has a demo banner, no outside links and no form except the sign-in", () => {
   assert.match(html, /<html lang="lt">/);
   assert.match(html, /<meta charset="utf-8">/);
   assert.match(html, /id="demo-banner"[^>]*>[^<]*išgalvot/);
-  assert.doesNotMatch(html, /<form\b/i);
+  assert.deepEqual(tags("form").map((form) => form.attrs.id), ["login-form"]);
   assert.doesNotMatch(html, /<a\b/i);
   assert.doesNotMatch(html, /<iframe\b/i);
+});
+
+test("login: the sign-in form sends nothing anywhere and sits in a dialog", () => {
+  const [form] = tags("form");
+  // method="dialog" only closes the dialog; a plain form would put the fields into the address bar.
+  assert.equal(form.attrs.method, "dialog");
+  assert.equal(form.attrs.action, undefined);
+  const dialogStart = html.indexOf('<dialog id="login-dialog"');
+  const dialogEnd = html.indexOf("</dialog>");
+  assert.ok(dialogStart !== -1 && dialogStart < form.index && form.index < dialogEnd, "the form is inside #login-dialog");
+
+  const inputs = Object.fromEntries(tags("input").map((input) => [input.attrs.id, input.attrs]));
+  assert.equal(inputs["login-username"].autocomplete, "username");
+  assert.equal(inputs["login-password"].type, "password");
+  assert.equal(inputs["login-password"].autocomplete, "current-password");
+  // No value may be written into the markup.
+  assert.equal(inputs["login-username"].value, undefined);
+  assert.equal(inputs["login-password"].value, undefined);
+});
+
+test("login: the page has the account controls the script expects, hidden until the script decides", () => {
+  for (const id of ["account-user", "sign-in", "sign-out", "login-dialog", "login-form", "login-username", "login-password", "login-error", "login-cancel"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `#${id}`);
+    assert.match(read("js/app.js"), new RegExp(`\\$\\("${id}"\\)`), `app.js uses #${id}`);
+  }
+  for (const id of ["account-user", "sign-in", "sign-out", "login-error"]) {
+    assert.match(html, new RegExp(`<[^>]*id="${id}"[^>]*\\shidden[\\s>]`), `#${id} starts hidden`);
+  }
+});
+
+test("login: the demo passwords are only in auth.js and the README", () => {
+  const { USERS } = authModule;
+  const readme = readFileSync(join(publicDir, "../README.md"), "utf8");
+  for (const user of USERS) {
+    assert.ok(readme.includes(`\`${user.username}\``), `README lists ${user.username}`);
+    assert.ok(readme.includes(`\`${user.password}\``), `README lists the password of ${user.username}`);
+    assert.ok(!html.includes(user.password), "index.html");
+    for (const file of ownScripts.filter((name) => name !== "auth.js")) {
+      assert.ok(!read(`js/${file}`).includes(user.password), `js/${file}`);
+    }
+  }
 });
 
 test("AC1.2 and AC1.3 the page has the controls the script expects", () => {

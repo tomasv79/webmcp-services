@@ -14,9 +14,37 @@
     <p class="banner" id="demo-banner" role="note">Demonstracinė svetainė: visi teikėjai, kontaktai, adresai ir kainos yra išgalvoti.</p>
 
     <header class="site-header">
-      <h1>Paslaugų katalogas</h1>
-      <p>Meistrai ir paslaugų teikėjai Lietuvoje, Latvijoje ir Estijoje</p>
+      <div class="site-title">
+        <h1>Paslaugų katalogas</h1>
+        <p>Meistrai ir paslaugų teikėjai Lietuvoje, Latvijoje ir Estijoje</p>
+      </div>
+      <div class="account">
+        <p id="account-user" class="account-user" aria-live="polite" hidden></p>
+        <button id="sign-in" type="button" hidden>Prisijungti</button>
+        <button id="sign-out" type="button" hidden>Atsijungti</button>
+      </div>
     </header>
+
+    <!-- Demo sign-in, checked in the browser. method="dialog" keeps the fields out of the address bar. -->
+    <dialog id="login-dialog" class="login" aria-labelledby="login-title">
+      <form id="login-form" method="dialog">
+        <h2 id="login-title">Prisijungimas</h2>
+        <p class="login-note">Demonstracinis prisijungimas. Neveskite tikrų slaptažodžių.</p>
+        <div class="field">
+          <label for="login-username">Naudotojo vardas</label>
+          <input id="login-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="50" required>
+        </div>
+        <div class="field">
+          <label for="login-password">Slaptažodis</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="100" required>
+        </div>
+        <p id="login-error" class="login-error" role="alert" hidden>Neteisingas naudotojo vardas arba slaptažodis.</p>
+        <div class="login-actions">
+          <button id="login-cancel" type="button">Atšaukti</button>
+          <button id="login-submit" class="primary" type="submit">Prisijungti</button>
+        </div>
+      </form>
+    </dialog>
 
     <main>
       <section class="controls" aria-label="Paieška ir filtrai">

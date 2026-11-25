@@ -3,6 +3,7 @@
 
 import * as catalog from "./catalog.js";
 import { computeAvailability } from "./availability.js";
+import { browserStorage, createAuth } from "./auth.js";
 import { searchServices, SORT_OPTIONS } from "./search.js";
 import { createTools } from "./tools.js";
 import { registerTools } from "./webmcp.js";
@@ -26,6 +27,15 @@ const dom = {
   pageInfo: $("page-info"),
   pageNext: $("page-next"),
   empty: $("empty"),
+  accountUser: $("account-user"),
+  signIn: $("sign-in"),
+  signOut: $("sign-out"),
+  loginDialog: $("login-dialog"),
+  loginForm: $("login-form"),
+  loginUsername: $("login-username"),
+  loginPassword: $("login-password"),
+  loginError: $("login-error"),
+  loginCancel: $("login-cancel"),
 };
 
 const PAGE_SIZE = 10;
@@ -319,10 +329,54 @@ function showListing(id) {
   showNotice(`DI agentas atidarė paslaugą: ${listing.title}.`);
 }
 
+// ── Demo sign-in: shows who is using the page, locks nothing ──────────────
+
+const auth = createAuth({ storage: browserStorage() });
+
+function renderAccount() {
+  const user = auth.currentUser();
+  const text = user ? `Naudotojas: ${user.name}` : "";
+  if (dom.accountUser.textContent !== text) dom.accountUser.textContent = text;
+  dom.accountUser.hidden = !user;
+  dom.signIn.hidden = Boolean(user);
+  dom.signOut.hidden = !user;
+}
+
+function bindAccount() {
+  dom.signIn.addEventListener("click", () => {
+    dom.loginForm.reset();
+    dom.loginError.hidden = true;
+    dom.loginDialog.showModal();
+  });
+  dom.loginCancel.addEventListener("click", () => dom.loginDialog.close());
+  // The form has method="dialog": a submit that is not stopped closes the dialog and sends nothing anywhere.
+  dom.loginForm.addEventListener("submit", (event) => {
+    if (auth.signIn(dom.loginUsername.value, dom.loginPassword.value).ok) {
+      renderAccount();
+      return;
+    }
+    event.preventDefault();
+    dom.loginError.hidden = false;
+    dom.loginPassword.value = "";
+    dom.loginPassword.focus();
+  });
+  // The password does not stay in the page after the dialog closes, however it was closed.
+  dom.loginDialog.addEventListener("close", () => dom.loginForm.reset());
+  dom.signOut.addEventListener("click", () => {
+    auth.signOut();
+    renderAccount();
+    dom.signIn.focus();
+  });
+  // Signing in or out in another tab of this site.
+  window.addEventListener("storage", renderAccount);
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────
 
 fillStaticControls();
 bindControls();
+bindAccount();
+renderAccount();
 render();
 
 // "Dirba dabar" depends on the clock, so refresh once a minute while the page is visible.
