@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="lt">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Paslaugų katalogas (demo)</title>
+    <meta name="description" content="Demonstracinis paslaugų katalogas su WebMCP įrankiais. Visi duomenys išgalvoti.">
+    <link rel="stylesheet" href="styles.css">
+    <!-- WebMCP polyfill first: it does nothing when the browser has document.modelContext natively. -->
+    <script src="vendor/webmcp-polyfill.js"></script>
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <p class="banner" id="demo-banner" role="note">Demonstracinė svetainė: visi teikėjai, kontaktai, adresai ir kainos yra išgalvoti.</p>
+
+    <header class="site-header">
+      <h1>Paslaugų katalogas</h1>
+      <p>Meistrai ir paslaugų teikėjai Lietuvoje, Latvijoje ir Estijoje</p>
+    </header>
+
+    <main>
+      <section class="controls" aria-label="Paieška ir filtrai">
+        <div class="field field-wide">
+          <label for="f-query">Paieška</label>
+          <input id="f-query" type="search" placeholder="pvz., santechnikas, valymas, Kaunas" autocomplete="off" maxlength="200">
+        </div>
+        <div class="field">
+          <label for="f-category">Kategorija</label>
+          <select id="f-category"></select>
+        </div>
+        <div class="field">
+          <label for="f-country">Šalis</label>
+          <select id="f-country"></select>
+        </div>
+        <div class="field">
+          <label for="f-city">Miestas</label>
+          <select id="f-city"></select>
+        </div>
+        <div class="field">
+          <label for="f-sort">Rikiuoti</label>
+          <select id="f-sort"></select>
+        </div>
+        <label class="check" for="f-open">
+          <input id="f-open" type="checkbox">
+          Dirba dabar
+        </label>
+      </section>
+
+      <p id="agent-notice" class="agent-notice" role="status" hidden></p>
+
+      <div class="status-row">
+        <p id="result-count" class="result-count" aria-live="polite"></p>
+        <ul id="chips" class="chips" aria-label="Aktyvūs filtrai"></ul>
+        <button id="clear-all" class="clear-all" type="button" hidden>Išvalyti viską</button>
+      </div>
+
+      <section id="pinned" class="pinned" aria-label="Atidaryta paslauga" hidden></section>
+
+      <ul id="results" class="results"></ul>
+      <p id="empty" class="empty" hidden>Pagal pasirinktus filtrus paslaugų nerasta.</p>
+
+      <nav id="pager" class="pager" aria-label="Puslapiai" hidden>
+        <button id="page-prev" type="button">‹ Ankstesnis</button>
+        <p id="page-info" class="page-info"></p>
+        <button id="page-next" type="button">Kitas ›</button>
+      </nav>
+    </main>
+
+    <footer class="site-footer">
+      <p>Demonstracinis projektas. Duomenys skirti tik WebMCP įrankių bandymams.</p>
+    </footer>
+
+    <!-- Bridge to the local WebMCP relay. Pinned by version and by hash. -->
+    <script src="https://cdn.jsdelivr.net/npm/@mcp-b/webmcp-local-relay@6.2.0/dist/browser/embed.js" integrity="sha384-TdRkxKVAOiJ9BvMYRwxw+u7/H9nqwfD2Ovc2wXVGXrmWiqjGH+ONecZxIfnfqQIa" crossorigin="anonymous"></script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+# Only the web root and the nginx config go into the build context.
+*
+!public
+!nginx.conf
+**/.DS_Store

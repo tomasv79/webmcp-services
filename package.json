@@ -1,0 +1,13 @@
+{
+  "name": "webmcp-services",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Demo services directory with WebMCP tools. All data is fictional.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
