@@ -23,6 +23,16 @@ docker run --rm -p 127.0.0.1:5176:80 webmcp-services:local
 
 Stop and remove the image with `docker compose down --rmi local`.
 
+## Hosting
+
+`.github/workflows/pages.yml` publishes the `public/` folder to GitHub Pages on every push to `main`, at
+<https://tomasv79.github.io/webmcp-services/>. It needs Settings → Pages → Source set to "GitHub Actions" once.
+On a GitHub Free account Pages works only for a public repository.
+
+The hosted page is unlisted, not private: anyone with the link can open it. The page carries a `noindex` tag so search
+engines skip it. For the relay to accept the hosted page, add `https://tomasv79.github.io` to its `--widget-origin`
+list (see Relay below).
+
 ## Tests
 
 ```bash
