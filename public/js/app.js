@@ -11,7 +11,7 @@ import { searchServices, SORT_OPTIONS } from "./search.js";
 import { loadSqlite } from "./sqlite.js";
 import { createTools } from "./tools.js";
 import { createUserListings } from "./user-listings.js";
-import { registerTools } from "./webmcp.js";
+import { answeringAfter, registerTools } from "./webmcp.js";
 
 // The page's own copy of the catalog: the listings a person adds with the form are appended to its list.
 const catalog = { ...baseCatalog, listings: [...baseCatalog.listings] };
@@ -771,7 +771,8 @@ setInterval(() => {
   if (!document.hidden && !usingControls) render();
 }, 60_000);
 
-// The tools are registered once the stored listings are in the catalog, so an agent never searches without them.
-await openUserListings();
+// The tools are registered at once, so an agent that lists them right after the page loads finds them.
+// A call waits for the stored listings to be in the catalog, so an agent never searches without them.
+const stored = openUserListings();
 const tools = createTools({ catalog, now: () => new Date(), showFilters, showListing, showDraft });
-await registerTools(tools);
+await registerTools(answeringAfter(stored, tools));

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { registerTools } from "../public/js/webmcp.js";
+import { answeringAfter, registerTools } from "../public/js/webmcp.js";
 
 const tool = (name) => ({ name, description: `${name} tool`, inputSchema: { type: "object", properties: {} }, execute: () => ({}) });
 
@@ -63,4 +63,35 @@ test("AC5.1 a registerTool that throws synchronously is handled the same way", a
   const result = await registerTools([tool("a")], { doc, log });
   assert.deepEqual(result.failed, ["a"]);
   assert.equal(log.calls.warn.length, 1);
+});
+
+test("answeringAfter: a tool keeps its definition and answers only after the data is ready", async () => {
+  const ready = Promise.withResolvers();
+  const calls = [];
+  const original = { ...tool("search"), annotations: { readOnlyHint: true }, execute: (input, client) => { calls.push([input, client]); return { total: 3 }; } };
+  const [wrapped] = answeringAfter(ready.promise, [original]);
+  assert.deepEqual({ ...wrapped, execute: undefined }, { ...original, execute: undefined });
+
+  const answer = wrapped.execute({ query: "a" }, "client");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [], "the tool ran before the data was ready");
+
+  ready.resolve();
+  assert.deepEqual(await answer, { total: 3 });
+  assert.deepEqual(calls, [[{ query: "a" }, "client"]]);
+});
+
+test("answeringAfter: a tool still answers when getting the data ready failed", async () => {
+  const [wrapped] = answeringAfter(Promise.reject(new Error("no SQLite")), [{ ...tool("search"), execute: () => ({ total: 1 }) }]);
+  assert.deepEqual(await wrapped.execute({}), { total: 1 });
+});
+
+test("registerTools: every registration is started before the first one settles", async () => {
+  const first = Promise.withResolvers();
+  const started = [];
+  const doc = { modelContext: { registerTool: (t) => { started.push(t.name); return first.promise; } } };
+  const result = registerTools([tool("a"), tool("b"), tool("c")], { doc, log: fakeLog() });
+  assert.deepEqual(started, ["a", "b", "c"]);
+  first.resolve();
+  assert.deepEqual((await result).registered, ["a", "b", "c"]);
 });

@@ -105,13 +105,15 @@ test("sqlite: the vendored build is unchanged, ships with its licence and is loa
   assert.deepEqual(loaded, ["sqlite.js: ../vendor/sqlite3.js"]);
 });
 
-test("sqlite: the page shows the catalog first, then loads the stored listings, then registers the tools", () => {
+test("sqlite: the page shows the catalog first and registers the tools without waiting for the stored listings", () => {
   const appSource = read("js/app.js");
   const start = appSource.indexOf("// ── Start");
   const shown = appSource.indexOf("\nrender();", start);
-  const loaded = appSource.indexOf("\nawait openUserListings();", start);
-  const registered = appSource.indexOf("registerTools(", start);
-  assert.ok(start !== -1 && start < shown && shown < loaded && loaded < registered, `${start} < ${shown} < ${loaded} < ${registered}`);
+  const loading = appSource.indexOf("\nconst stored = openUserListings();", start);
+  const registered = appSource.indexOf("\nawait registerTools(answeringAfter(stored, tools));", start);
+  assert.ok(start !== -1 && start < shown && shown < loading && loading < registered, `${start} < ${shown} < ${loading} < ${registered}`);
+  // An agent that lists the tools right after the page loads must find them: SQLite takes seconds to arrive.
+  assert.doesNotMatch(appSource.slice(start, registered), /await (openUserListings\(|stored\b)/);
 });
 
 test("AC1.4 and AC1.5 the page has a demo banner, no outside links and no form except the sign-in and the new service", () => {

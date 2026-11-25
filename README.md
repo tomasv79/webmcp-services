@@ -135,7 +135,8 @@ CREATE TABLE listings (
   package, version 3.54.1-build1 (Apache-2.0; SQLite itself is in the public domain). A test pins both by SHA-256. To
   update, replace the two files and the hashes in `tests/page.test.js`.
 - The two files are about 1.5 MB together. The page shows the catalog first and loads them after, so the first paint
-  does not wait; the saved services appear a moment later, and the WebMCP tools are registered once they are in.
+  does not wait; the saved services appear a moment later. The WebMCP tools are registered at once, and a tool call
+  waits until the saved services are in.
 - Services saved by an earlier version of the page (a JSON list under `webmcp-services.listings`) are moved into the
   database on the first load and the old value is removed.
 - A stored value that is not a usable database is ignored and replaced by the next service that is added.
@@ -202,7 +203,7 @@ public/
   js/availability.js          Vilnius clock, openNow, nextFreeDate
   js/search.js                searchServices(catalog, filters, now)
   js/tools.js                 createTools({ catalog, now, showFilters, showListing, showDraft })
-  js/webmcp.js                registerTools(tools)
+  js/webmcp.js                registerTools(tools), answeringAfter(ready, tools)
   js/auth.js                  two demo users, createAuth({ storage }): signIn, signOut, currentUser
   js/i18n.js                  the page's own words in Lithuanian and English, createI18n({ storage, preferred }):
                               language, setLanguage, t, number
