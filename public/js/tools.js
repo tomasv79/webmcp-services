@@ -213,7 +213,7 @@ function draftRecord(listing, category) {
 
 const DRAFT_STATUS = {
   awaiting_user:
-    'The new-service form is open on the page with these values. Ask the user to check it and press "Pridėti paslaugą" (Add service). Nothing is added until they do.',
+    'The new-service form is open on the page with these values. Ask the user to check it and press the "Add service" button ("Pridėti paslaugą" when the page is in Lithuanian). Nothing is added until they do.',
   sign_in_required:
     "The form is filled in, but the user is signed out. The sign-in dialog is open on the page, and the form opens right after the user signs in. The user signs in on the page themselves: do not ask for the password.",
 };

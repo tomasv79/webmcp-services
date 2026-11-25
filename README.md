@@ -46,9 +46,28 @@ No install step: the tests use Node's built-in runner and, for the listing datab
 TZ=America/New_York npm test
 ```
 
+## Languages
+
+The page's own words are in Lithuanian and English; the **LT** / **EN** buttons in the header switch between them
+without a reload, keeping the filters, the open page of results and whatever is typed into the new-service form.
+
+- The page opens in the language chosen before (kept in `localStorage` under `webmcp-services.language`), else in the
+  first of the browser's languages that it has, else in English.
+- `index.html` is the Lithuanian page. Every text in it names its entry in `js/i18n.js` with `data-i18n` (or
+  `data-i18n-placeholder`, `data-i18n-aria-label`, `data-i18n-content` for an attribute), and the script writes the
+  English one over it. `tests/i18n.test.js` checks that the markup and the Lithuanian entries say the same, that both
+  languages have every entry, and that no text in the page is left unmarked.
+- The data is not translated by the page: the catalog already has both names of every category and country and both
+  texts of every listing (`title` / `titleEn`, `description` / `descriptionEn`), and the page shows the ones of its
+  language. A service added with the form has one text and shows as typed in both. City names are the local ones.
+- Numbers and prices follow the language: `1 234,5` and `25 €` in Lithuanian, `1,234.5` and `€25` in English.
+- The tools do not depend on the page language: they answer in English and return both texts, as before.
+
+The rest of this file calls the buttons by their Lithuanian names, with the English ones in brackets.
+
 ## Sign-in
 
-The header has a **Prisijungti** button that opens a sign-in dialog. Two demo users exist:
+The header has a **Prisijungti** (**Sign in**) button that opens a sign-in dialog. Two demo users exist:
 
 | Username | Password | Shown as |
 |---|---|---|
@@ -57,7 +76,7 @@ The header has a **Prisijungti** button that opens a sign-in dialog. Two demo us
 
 - This is a demo sign-in, not security. The user list is in `public/js/auth.js`, which the browser downloads, and the
   check runs in the page. It tells the page who is using it and protects nothing. Never put a real password there.
-- Signing in changes the header: it shows the user's name and an **Atsijungti** button. It is also needed to add a
+- Signing in changes the header: it shows the user's name and an **Atsijungti** (**Sign out**) button. It is also needed to add a
   service (see below). The directory and the WebMCP tools work the same signed in or out.
 - The username ignores case and surrounding spaces; the password must match exactly.
 - The signed-in username (never the password) is kept in `localStorage` under `webmcp-services.user`, so it survives a
@@ -66,20 +85,20 @@ The header has a **Prisijungti** button that opens a sign-in dialog. Two demo us
 
 ## Adding a service
 
-The header has a **Pridėti paslaugą** button that opens the new-service form. A signed-out visitor gets the sign-in
+The header has a **Pridėti paslaugą** (**Add service**) button that opens the new-service form. A signed-out visitor gets the sign-in
 dialog first and the form right after signing in.
 
 - There is no backend, so a new service is kept in a SQLite database in the browser (see below). It is visible only in
   that browser, in all tabs of the site, and survives a reload. Clearing the site data removes it; the page has no
   button to edit or delete a service yet.
 - A new service is a normal listing: the list, the filters and the three search tools find it. It gets the next free id
-  (`svc-10001`, `svc-10002`, ...), a **Pridėta šioje naršyklėje** badge, and is shown highlighted above the list right
+  (`svc-10001`, `svc-10002`, ...), a **Pridėta šioje naršyklėje** (**Added in this browser**) badge, and is shown highlighted above the list right
   after it is added.
 - It has no reviews: `rating` is `{ average: 0, count: 0 }`, so it sorts after the rated listings and `minRating` leaves
   it out. It is never `verified`. The form asks for one language only, so `titleEn` and `descriptionEn` repeat the text
   as typed.
 - The city is chosen from the cities the catalog already has, so the city filter and the tool vocabulary do not change.
-- The fields are checked by `js/listing-input.js`, with messages in Lithuanian under each wrong field. The browser's own
+- The fields are checked by `js/listing-input.js`, with messages in the page's language under each wrong field. The browser's own
   validation is off (`novalidate`). A decimal comma is accepted in prices; a postal code may be typed without the
   country prefix (`08318` becomes `LT-08318`).
 - What is stored is the form input, not the finished listing. Every page load reads it through the same checks, so a
@@ -185,6 +204,8 @@ public/
   js/tools.js                 createTools({ catalog, now, showFilters, showListing, showDraft })
   js/webmcp.js                registerTools(tools)
   js/auth.js                  two demo users, createAuth({ storage }): signIn, signOut, currentUser
+  js/i18n.js                  the page's own words in Lithuanian and English, createI18n({ storage, preferred }):
+                              language, setLanguage, t, number
   js/listing-input.js         createListingReader(catalog): form values in, a listing or a list of errors out;
                               inputOfListing(listing): the way back, used to fill the form from a draft
   js/user-listings.js         createUserListings({ catalog, read, store }): sync, add; added listings from the store

@@ -4,7 +4,8 @@
 import * as baseCatalog from "./catalog.js";
 import { computeAvailability } from "./availability.js";
 import { browserStorage, createAuth } from "./auth.js";
-import { createListingReader, WEEKDAY_LABEL } from "./listing-input.js";
+import { createI18n } from "./i18n.js";
+import { createListingReader, WEEKDAY_LABELS } from "./listing-input.js";
 import { createListingStore } from "./listing-store.js";
 import { searchServices, SORT_OPTIONS } from "./search.js";
 import { loadSqlite } from "./sqlite.js";
@@ -37,6 +38,7 @@ const dom = {
   accountUser: $("account-user"),
   signIn: $("sign-in"),
   signOut: $("sign-out"),
+  language: $("language"),
   loginDialog: $("login-dialog"),
   loginForm: $("login-form"),
   loginUsername: $("login-username"),
@@ -93,24 +95,35 @@ const citiesByCountry = new Map(catalog.countries.map((country) => [country.code
 for (const [city, code] of countryOfCity) citiesByCountry.get(code).push(city);
 for (const cities of citiesByCountry.values()) cities.sort((a, b) => a.localeCompare(b, "lt"));
 
-const UNIT_LABEL = { hour: "val.", job: "darbas", m2: "m²", visit: "vizitas", day: "diena" };
-// The same units after "Kaina už" in the new-service form.
-const PRICE_FOR_LABEL = { hour: "valandą", job: "darbą", m2: "m²", visit: "vizitą", day: "dieną" };
-const LANGUAGE_LABEL = { lt: "lietuvių", lv: "latvių", et: "estų", en: "anglų", ru: "rusų" };
-const SORT_LABEL = {
-  relevance: "Aktualumas",
-  rating: "Įvertinimas",
-  price_asc: "Kaina: nuo mažiausios",
-  price_desc: "Kaina: nuo didžiausios",
-  soonest: "Greičiausiai laisvi",
-};
+// ── Language: the page's own words are Lithuanian or English; the texts are in i18n.js ──
 
-const number = (value) => value.toLocaleString("lt-LT");
+const i18n = createI18n({ storage: browserStorage(), preferred: globalThis.navigator?.languages });
+const { t, number } = i18n;
+const inEnglish = () => i18n.language === "en";
+
+/** A name from one of the small tables of i18n.js ("unit", "priceFor", "language", "sort"), or the code itself. */
+const labelOf = (group, code) => t(`${group}.${code}`) ?? code;
+const weekdayLabel = (day) => WEEKDAY_LABELS[i18n.language][day];
+
+// The catalog has both names of a category and a country, and both texts of a listing.
+// A listing added with the form has one text, whatever the language.
+const nameOf = (entry) => (inEnglish() ? entry.nameEn : entry.nameLt);
+const titleOf = (listing) => (inEnglish() ? listing.titleEn : listing.title);
+const descriptionOf = (listing) => (inEnglish() ? listing.descriptionEn : listing.description);
+const categoryName = (id) => {
+  const category = categoryById.get(id);
+  return category ? nameOf(category) : id;
+};
+const countryName = (code) => {
+  const country = countryByCode.get(code);
+  return country ? nameOf(country) : code;
+};
 
 // What the page shows. `filters` has the same shape as the search_services input, without limit and offset.
 let filters = {};
 let page = 1;
 let pinnedId = null;
+// The i18n.js key of the line above the pinned listing.
 let pinnedLabel = "";
 
 function el(tag, options = {}, children = []) {
@@ -126,20 +139,72 @@ function option(value, label) {
   return el("option", { text: label, attrs: { value } });
 }
 
+// Texts of elements that are built once: written now and again whenever the language changes.
+const relabels = [];
+
+function live(write) {
+  relabels.push(write);
+  write();
+}
+
+/** An option that is built once; `label` gives its text in the current language. */
+function liveOption(value, label) {
+  const node = option(value, "");
+  live(() => {
+    node.textContent = label();
+  });
+  return node;
+}
+
+const TRANSLATED_ATTRIBUTES = ["aria-label", "placeholder", "content"];
+
+/** The texts written in index.html: data-i18n names the text of an element, data-i18n-<attribute> of an attribute. */
+function showStaticText() {
+  document.documentElement.lang = i18n.language;
+  for (const node of document.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
+  for (const name of TRANSLATED_ATTRIBUTES) {
+    for (const node of document.querySelectorAll(`[data-i18n-${name}]`)) node.setAttribute(name, t(node.getAttribute(`data-i18n-${name}`)));
+  }
+  for (const button of dom.language.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.language === i18n.language));
+  }
+}
+
+/** Everything that depends on the language and is not drawn again by render(). */
+function showLanguage() {
+  showStaticText();
+  fillStaticControls();
+  for (const write of relabels) write();
+}
+
+function bindLanguage() {
+  dom.language.addEventListener("click", (event) => {
+    const language = event.target.closest?.("button")?.dataset.language;
+    if (!language || language === i18n.language || !i18n.setLanguage(language)) return;
+    showLanguage();
+    // Messages under the fields of the new-service form are in the old language; the next submit shows them again.
+    clearServiceErrors();
+    renderAccount();
+    renderNotice();
+    render();
+  });
+}
+
 // ── Controls ──────────────────────────────────────────────────────────────
 
+/** The options are written again when the language changes; render() then puts the chosen values back. */
 function fillStaticControls() {
-  dom.category.append(option("", "Visos kategorijos"), ...catalog.categories.map((c) => option(c.id, c.nameLt)));
-  dom.country.append(option("", "Visos šalys"), ...catalog.countries.map((c) => option(c.code, c.nameLt)));
-  dom.sort.append(option("", "Numatytasis"), ...SORT_OPTIONS.map((sort) => option(sort, SORT_LABEL[sort])));
+  dom.category.replaceChildren(option("", t("filters.allCategories")), ...catalog.categories.map((c) => option(c.id, nameOf(c))));
+  dom.country.replaceChildren(option("", t("filters.allCountries")), ...catalog.countries.map((c) => option(c.code, nameOf(c))));
+  dom.sort.replaceChildren(option("", t("filters.defaultSort")), ...SORT_OPTIONS.map((sort) => option(sort, labelOf("sort", sort))));
 }
 
 function fillCities() {
   const countries = filters.country ? [countryByCode.get(filters.country)] : catalog.countries;
   const groups = countries.map((country) =>
-    el("optgroup", { attrs: { label: country.nameLt } }, citiesByCountry.get(country.code).map((city) => option(city, city))),
+    el("optgroup", { attrs: { label: nameOf(country) } }, citiesByCountry.get(country.code).map((city) => option(city, city))),
   );
-  const options = [option("", "Visi miestai"), ...groups];
+  const options = [option("", t("filters.allCities")), ...groups];
   // A tool may ask for a city outside the chosen country (the result is then empty). Keep it visible in the control.
   const listed = countries.some((country) => citiesByCountry.get(country.code).includes(filters.city));
   if (filters.city && !listed) options.push(option(filters.city, filters.city));
@@ -196,18 +261,18 @@ function bindControls() {
 // ── Chips: every active filter, including the ones only a tool can set ────
 
 const CHIP_LABEL = {
-  query: (v) => `Paieška: ${v}`,
-  category: (v) => `Kategorija: ${categoryById.get(v)?.nameLt ?? v}`,
-  country: (v) => `Šalis: ${countryByCode.get(v)?.nameLt ?? v}`,
-  city: (v) => `Miestas: ${v}`,
-  priceMax: (v) => `Kaina iki ${number(v)} €`,
-  priceUnit: (v) => `Kaina už: ${UNIT_LABEL[v] ?? v}`,
-  minRating: (v) => `Įvertinimas nuo ${number(v)}`,
-  language: (v) => `Kalba: ${LANGUAGE_LABEL[v] ?? v}`,
-  travelsToClient: (v) => (v ? "Atvyksta pas klientą" : "Neatvyksta pas klientą"),
-  openNow: () => "Dirba dabar",
-  availableWithinDays: (v) => (v === 0 ? "Laisvas šiandien" : `Laisvas per ${v} d.`),
-  sortBy: (v) => `Rikiavimas: ${SORT_LABEL[v] ?? v}`,
+  query: (v) => t("chip.query", v),
+  category: (v) => t("chip.category", categoryName(v)),
+  country: (v) => t("chip.country", countryName(v)),
+  city: (v) => t("chip.city", v),
+  priceMax: (v) => t("chip.priceMax", v),
+  priceUnit: (v) => t("chip.priceUnit", labelOf("priceFor", v)),
+  minRating: (v) => t("chip.minRating", v),
+  language: (v) => t("chip.language", labelOf("language", v)),
+  travelsToClient: (v) => (v ? t("chip.travels") : t("chip.doesNotTravel")),
+  openNow: () => t("chip.openNow"),
+  availableWithinDays: (v) => t("chip.availableWithinDays", v),
+  sortBy: (v) => t("chip.sortBy", labelOf("sort", v)),
 };
 
 function renderChips(usedSort) {
@@ -216,8 +281,8 @@ function renderChips(usedSort) {
     .map((key) => {
       let label = CHIP_LABEL[key](filters[key]);
       // "Relevance" needs search words; without them the list is sorted by rating, and the chip says so.
-      if (key === "sortBy" && usedSort !== filters.sortBy) label = `Rikiavimas: ${SORT_LABEL[usedSort]} (nėra paieškos žodžių)`;
-      const remove = el("button", { text: "×", attrs: { type: "button", "aria-label": `Pašalinti filtrą: ${label}` } });
+      if (key === "sortBy" && usedSort !== filters.sortBy) label = t("chip.sortFallback", labelOf("sort", usedSort));
+      const remove = el("button", { text: "×", attrs: { type: "button", "aria-label": t("chip.remove", label) } });
       remove.addEventListener("click", () => setFilter(key, undefined));
       return el("li", { className: "chip", attrs: { "data-filter": key } }, [el("span", { className: "chip-label", text: label }), remove]);
     });
@@ -228,22 +293,22 @@ function renderChips(usedSort) {
 // ── Cards ─────────────────────────────────────────────────────────────────
 
 function priceText(price) {
-  const amount = price.to !== undefined && price.to !== price.from ? `${number(price.from)}–${number(price.to)} €` : `nuo ${number(price.from)} €`;
+  const amount = price.to !== undefined && price.to !== price.from ? t("card.priceRange", price.from, price.to) : t("card.priceFrom", price.from);
   const notes = [];
-  if (price.calloutFee !== undefined) notes.push(`iškvietimas ${number(price.calloutFee)} €`);
-  if (price.negotiable) notes.push("kaina derinama");
-  return { amount, unit: `/ ${UNIT_LABEL[price.unit]}`, notes: notes.join(" · ") };
+  if (price.calloutFee !== undefined) notes.push(t("card.callout", price.calloutFee));
+  if (price.negotiable) notes.push(t("card.negotiable"));
+  return { amount, unit: `/ ${labelOf("unit", price.unit)}`, notes: notes.join(" · ") };
 }
 
 function freeText(availability) {
-  if (availability.daysUntilFree === 0) return "šiandien";
-  if (availability.daysUntilFree === 1) return "rytoj";
+  if (availability.daysUntilFree === 0) return t("card.today");
+  if (availability.daysUntilFree === 1) return t("card.tomorrow");
   return availability.nextFreeDate;
 }
 
 function serviceAreaText(area) {
-  const parts = [area.travelsToClient ? `Atvyksta pas klientą (iki ${number(area.radiusKm)} km)` : "Tik teikėjo vietoje"];
-  if (area.remote) parts.push("galima nuotoliu");
+  const parts = [area.travelsToClient ? t("card.travels", area.radiusKm) : t("card.onSite")];
+  if (area.remote) parts.push(t("card.remote"));
   return parts.join(", ");
 }
 
@@ -256,41 +321,41 @@ function card({ listing, availability }, { pinned = false } = {}) {
   const price = priceText(listing.price);
 
   const providerLine = el("p", { className: "provider" }, [
-    `${provider.name} · ${provider.type === "company" ? "įmonė" : "privatus meistras"} · ${provider.yearsExperience} m. patirtis`,
+    `${provider.name} · ${t(provider.type === "company" ? "card.type.company" : "card.type.individual")} · ${t("card.experience", provider.yearsExperience)}`,
   ]);
-  if (provider.verified) providerLine.append(" · ", el("span", { className: "verified", text: "✓ Patikrintas" }));
+  if (provider.verified) providerLine.append(" · ", el("span", { className: "verified", text: t("card.verified") }));
 
-  const hoursText = availability.todayHours ? `Šiandien ${availability.todayHours[0]}–${availability.todayHours[1]}` : "Šiandien nedirba";
+  const hoursText = availability.todayHours ? t("card.todayHours", ...availability.todayHours) : t("card.todayClosed");
   const availabilityParts = [
-    el("span", { className: `pill ${availability.openNow ? "open" : "closed"}`, text: availability.openNow ? "Dirba dabar" : "Dabar nedirba" }),
-    `${hoursText} · Artimiausias laisvas laikas: ${freeText(availability)}`,
+    el("span", { className: `pill ${availability.openNow ? "open" : "closed"}`, text: availability.openNow ? t("card.openNow") : t("card.closedNow") }),
+    `${hoursText} · ${t("card.nextFree", freeText(availability))}`,
   ];
-  if (availability.emergency) availabilityParts.push(" · Avarinė tarnyba 24/7");
+  if (availability.emergency) availabilityParts.push(` · ${t("card.emergency")}`);
 
   const priceBox = el("div", { className: "price" }, [el("strong", { text: price.amount }), el("span", { text: price.unit })]);
   if (price.notes) priceBox.append(el("small", { text: price.notes }));
 
-  const badges = [el("span", { className: "badge", text: categoryById.get(listing.category)?.nameLt ?? listing.category })];
-  if (listing.addedBy !== undefined) badges.push(el("span", { className: "badge own", text: "Pridėta šioje naršyklėje" }));
+  const badges = [el("span", { className: "badge", text: categoryName(listing.category) })];
+  if (listing.addedBy !== undefined) badges.push(el("span", { className: "badge own", text: t("card.own") }));
 
   // A listing that was just added has no reviews yet.
   const { rating } = listing;
-  const ratingText = rating.count > 0 ? `★ ${number(rating.average)} (${number(rating.count)} atsiliepimai)` : "Atsiliepimų dar nėra";
+  const ratingText = rating.count > 0 ? t("card.rating", rating.average, rating.count) : t("card.noReviews");
 
   const attrs = { id: pinned ? "pinned-card" : `card-${listing.id}`, "data-id": listing.id };
   return el(pinned ? "div" : "li", { className: pinned ? "card highlight" : "card", attrs }, [
     el("div", { className: "card-head" }, [
-      el("div", { className: "card-title" }, [...badges, el("h2", { text: listing.title }), providerLine]),
+      el("div", { className: "card-title" }, [...badges, el("h2", { text: titleOf(listing) }), providerLine]),
       priceBox,
     ]),
-    el("p", { className: "desc", text: listing.description }),
+    el("p", { className: "desc", text: descriptionOf(listing) }),
     el("dl", { className: "facts" }, [
-      fact("Vieta", `${location.address}, ${location.city}, ${countryByCode.get(location.country)?.nameLt ?? location.country}`),
-      fact("Užimtumas", ...availabilityParts),
-      fact("Įvertinimas", ratingText),
-      fact("Kontaktai", `${contact.phone} · ${contact.email}`),
-      fact("Kalbos", listing.languages.map((code) => LANGUAGE_LABEL[code] ?? code).join(", ")),
-      fact("Aptarnavimas", serviceAreaText(listing.serviceArea)),
+      fact(t("fact.location"), `${location.address}, ${location.city}, ${countryName(location.country)}`),
+      fact(t("fact.availability"), ...availabilityParts),
+      fact(t("fact.rating"), ratingText),
+      fact(t("fact.contact"), `${contact.phone} · ${contact.email}`),
+      fact(t("fact.languages"), listing.languages.map((code) => labelOf("language", code)).join(", ")),
+      fact(t("fact.serviceArea"), serviceAreaText(listing.serviceArea)),
     ]),
     el("p", { className: "card-id", text: listing.id }),
   ]);
@@ -303,14 +368,14 @@ function renderPinned(now) {
     dom.pinned.hidden = true;
     return;
   }
-  const close = el("button", { className: "clear-all", text: "Uždaryti", attrs: { type: "button" } });
+  const close = el("button", { className: "clear-all", text: t("pinned.close"), attrs: { type: "button" } });
   close.addEventListener("click", () => {
     pinnedId = null;
     hideNotice();
     render();
   });
   dom.pinned.replaceChildren(
-    el("div", { className: "pinned-head" }, [el("p", { text: pinnedLabel }), close]),
+    el("div", { className: "pinned-head" }, [el("p", { text: t(pinnedLabel) }), close]),
     card({ listing, availability: computeAvailability(listing.availability, now) }, { pinned: true }),
   );
   dom.pinned.hidden = false;
@@ -334,28 +399,38 @@ function render() {
   dom.results.dataset.total = String(result.total);
 
   // Only touch the live region when the text changes, so screen readers do not repeat it.
-  let countText = `Rasta paslaugų: ${number(result.total)} iš ${number(catalog.listings.length)}`;
-  if (result.total > 0) countText += ` · rodoma ${number(result.offset + 1)}–${number(result.offset + result.items.length)}`;
+  let countText = t("results.count", result.total, catalog.listings.length);
+  if (result.total > 0) countText += ` · ${t("results.shown", result.offset + 1, result.offset + result.items.length)}`;
   if (dom.count.textContent !== countText) dom.count.textContent = countText;
 
   dom.empty.hidden = result.total > 0;
   dom.pager.hidden = pages === 1;
   dom.pagePrev.disabled = page === 1;
   dom.pageNext.disabled = page === pages;
-  dom.pageInfo.textContent = `Puslapis ${number(page)} iš ${number(pages)}`;
+  dom.pageInfo.textContent = t("pager.info", page, pages);
   return result;
 }
 
 // ── What a tool call does on the page ─────────────────────────────────────
 
-function showNotice(text) {
-  dom.notice.textContent = text;
-  dom.notice.hidden = false;
+// The notice is kept as a function that writes it, so that it can be written again in the other language.
+let notice = null;
+
+function renderNotice() {
+  const text = notice ? notice() : "";
+  // Only touch the live region when the text changes, so screen readers do not repeat it.
+  if (dom.notice.textContent !== text) dom.notice.textContent = text;
+  dom.notice.hidden = !notice;
+}
+
+function showNotice(write) {
+  notice = write;
+  renderNotice();
 }
 
 function hideNotice() {
-  dom.notice.hidden = true;
-  dom.notice.textContent = "";
+  notice = null;
+  renderNotice();
 }
 
 /** search_services: same filters as the agent used, opened at the page that holds the results it got back. */
@@ -364,8 +439,8 @@ function showFilters(nextFilters, view) {
   const offset = Number.isInteger(view?.offset) && view.offset > 0 ? view.offset : 0;
   page = Math.floor(offset / PAGE_SIZE) + 1;
   pinnedId = null;
-  const result = render();
-  showNotice(`DI agentas atliko paiešką ir pritaikė filtrus: rasta paslaugų – ${number(result.total)}.`);
+  const { total } = render();
+  showNotice(() => t("notice.search", total));
 }
 
 /** get_service: show the listing above the list, whatever the filters and the page are. */
@@ -373,10 +448,10 @@ function showListing(id) {
   const listing = listingById.get(id);
   if (!listing) return;
   pinnedId = id;
-  pinnedLabel = "DI agento atidaryta paslauga";
+  pinnedLabel = "pinned.byAgent";
   render();
   dom.pinned.scrollIntoView({ block: "start", behavior: "smooth" });
-  showNotice(`DI agentas atidarė paslaugą: ${listing.title}.`);
+  showNotice(() => t("notice.opened", titleOf(listing)));
 }
 
 // ── Demo sign-in: shows who is using the page, locks nothing ──────────────
@@ -385,7 +460,7 @@ const auth = createAuth({ storage: browserStorage() });
 
 function renderAccount() {
   const user = auth.currentUser();
-  const text = user ? `Naudotojas: ${user.name}` : "";
+  const text = user ? t("account.user", user.name) : "";
   if (dom.accountUser.textContent !== text) dom.accountUser.textContent = text;
   dom.accountUser.hidden = !user;
   dom.signIn.hidden = Boolean(user);
@@ -449,7 +524,9 @@ async function openUserListings() {
     // No WebAssembly, or the SQLite files did not arrive: the form still works, and says that nothing was saved.
     console.warn("SQLite did not start; added services will not be saved.", error);
   }
-  userListings = createUserListings({ catalog, read: createListingReader(catalog), store });
+  const read = createListingReader(catalog);
+  // The messages under the wrong fields come in the language the page is in when the form is submitted.
+  userListings = createUserListings({ catalog, read: (input) => read(input, i18n.language), store });
   showStoredListings();
 }
 
@@ -469,35 +546,48 @@ function showStoredListings() {
 const hourRows = new Map();
 
 function fillServiceForm() {
-  serviceFields.category.append(option("", "Pasirinkite kategoriją"), ...catalog.categories.map((c) => option(c.id, c.nameLt)));
-  serviceFields.country.append(...catalog.countries.map((c) => option(c.code, c.nameLt)));
-  serviceFields.priceUnit.append(...catalog.PRICE_UNITS.map((unit) => option(unit, PRICE_FOR_LABEL[unit] ?? unit)));
+  // The form keeps what was typed while the language changes, so its options and labels are built once and relabelled.
+  serviceFields.category.append(liveOption("", () => t("form.chooseCategory")), ...catalog.categories.map((c) => liveOption(c.id, () => nameOf(c))));
+  serviceFields.country.append(...catalog.countries.map((c) => liveOption(c.code, () => nameOf(c))));
+  serviceFields.priceUnit.append(...catalog.PRICE_UNITS.map((unit) => liveOption(unit, () => labelOf("priceFor", unit))));
 
   // Defaults are written as attributes, so that form.reset() brings them back.
   dom.serviceLanguages.append(
     ...catalog.LANGUAGES.map((code, index) => {
       const attrs = { type: "checkbox", name: "languages", value: code };
       if (index === 0) attrs.checked = "";
-      return el("label", { className: "check" }, [el("input", { attrs }), LANGUAGE_LABEL[code] ?? code]);
+      const name = el("span");
+      live(() => {
+        name.textContent = labelOf("language", code);
+      });
+      return el("label", { className: "check" }, [el("input", { attrs }), name]);
     }),
   );
 
   for (const day of catalog.WEEKDAYS) {
-    const label = WEEKDAY_LABEL[day];
     const worksAttrs = { type: "checkbox" };
     if (day !== "sat" && day !== "sun") worksAttrs.checked = "";
     const works = el("input", { attrs: worksAttrs });
-    const open = el("input", { attrs: { type: "time", value: "09:00", "aria-label": `${label}: dirbu nuo` } });
-    const close = el("input", { attrs: { type: "time", value: "18:00", "aria-label": `${label}: dirbu iki` } });
-    const row = el("div", { className: "hours-row" }, [el("label", { className: "check" }, [works, label]), open, "–", close]);
+    const open = el("input", { attrs: { type: "time", value: "09:00" } });
+    const close = el("input", { attrs: { type: "time", value: "18:00" } });
+    const name = el("span");
+    live(() => {
+      const label = weekdayLabel(day);
+      name.textContent = label;
+      open.setAttribute("aria-label", t("form.hoursFrom", label));
+      close.setAttribute("aria-label", t("form.hoursTo", label));
+    });
+    const row = el("div", { className: "hours-row" }, [el("label", { className: "check" }, [works, name]), open, "–", close]);
     hourRows.set(day, { row, works, open, close });
     dom.serviceHours.append(row);
   }
 }
 
+const chooseCity = liveOption("", () => t("form.chooseCity"));
+
 function fillServiceCities() {
   const cities = citiesByCountry.get(serviceFields.country.value) ?? [];
-  serviceFields.city.replaceChildren(option("", "Pasirinkite miestą"), ...cities.map((city) => option(city, city)));
+  serviceFields.city.replaceChildren(chooseCity, ...cities.map((city) => option(city, city)));
 }
 
 /** Fields that depend on a checkbox are switched off while they do not apply. */
@@ -581,7 +671,7 @@ function showServiceErrors(errors, summary) {
     place.control.setAttribute("aria-describedby", messageId);
     first ??= place.control;
   }
-  dom.serviceError.textContent = summary ?? `Paslauga nepridėta. Pataisykite pažymėtus laukus: ${number(errors.length)}.`;
+  dom.serviceError.textContent = summary ?? t("form.errors", errors.length);
   dom.serviceError.hidden = false;
   first?.focus();
 }
@@ -629,12 +719,12 @@ function bindServiceForm() {
     const user = auth.currentUser();
     if (!user) {
       event.preventDefault();
-      showServiceErrors([], "Esate atsijungę. Uždarykite formą ir prisijunkite iš naujo: įvesti duomenys išliks.");
+      showServiceErrors([], t("form.signedOut"));
       return;
     }
     if (!userListings) {
       event.preventDefault();
-      showServiceErrors([], "Duomenų bazė dar kraunama. Pabandykite dar kartą po akimirkos: įvesti duomenys išliks.");
+      showServiceErrors([], t("form.loading"));
       return;
     }
     const result = userListings.add(serviceInput(), user.username);
@@ -653,13 +743,9 @@ function bindServiceForm() {
     syncServiceForm();
 
     pinnedId = listing.id;
-    pinnedLabel = "Jūsų pridėta paslauga";
+    pinnedLabel = "pinned.own";
     render();
-    showNotice(
-      result.saved
-        ? `Paslauga pridėta: ${listing.title} (${listing.id}). Ji saugoma tik šioje naršyklėje.`
-        : `Paslauga pridėta: ${listing.title} (${listing.id}), bet naršyklė neleido jos išsaugoti: perkrovus puslapį ji dings.`,
-    );
+    showNotice(() => t(result.saved ? "notice.added" : "notice.addedUnsaved", listing.title, listing.id));
     // Closing the dialog puts the focus back on the button in the header; scroll to the new listing after that.
     dom.serviceDialog.addEventListener("close", () => dom.pinned.scrollIntoView({ block: "start" }), { once: true });
   });
@@ -667,17 +753,18 @@ function bindServiceForm() {
 
 // ── Start ─────────────────────────────────────────────────────────────────
 
-fillStaticControls();
 fillServiceForm();
 fillServiceCities();
 syncServiceForm();
+showLanguage();
 bindControls();
+bindLanguage();
 bindAccount();
 bindServiceForm();
 renderAccount();
 render();
 
-// "Dirba dabar" depends on the clock, so refresh once a minute while the page is visible.
+// "Open now" depends on the clock, so refresh once a minute while the page is visible.
 // Not while someone is using a control: an open dropdown would close.
 setInterval(() => {
   const usingControls = document.activeElement?.closest?.(".controls") != null;

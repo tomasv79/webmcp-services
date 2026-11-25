@@ -125,6 +125,30 @@ main,
   font-weight: 600;
 }
 
+/* Lithuanian or English: two buttons in one frame, the chosen one filled. */
+.language {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.account .language button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  /* The frame clips an outline drawn outside the button. */
+  outline-offset: -2px;
+}
+
+.account .language button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
 .dialog {
   padding: 20px;
   /* Scrolling past the end of a long form does not move the page behind it. */

@@ -168,7 +168,7 @@ test("new service: the form sends nothing anywhere and sits in a dialog", () => 
   const form = tags("form").find((tag) => tag.attrs.id === "service-form");
   assert.equal(form.attrs.method, "dialog");
   assert.equal(form.attrs.action, undefined);
-  // The script checks the fields and shows the messages in Lithuanian, so the browser's own check is off.
+  // The script checks the fields and shows the messages in the language of the page, so the browser's own check is off.
   assert.equal(form.attrs.novalidate, "");
   const dialogStart = html.indexOf('<dialog id="service-dialog"');
   const dialogEnd = html.indexOf("</dialog>", dialogStart);
