@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createUserListings, STORAGE_KEY } from "../public/js/user-listings.js";
+import { createUserListings } from "../public/js/user-listings.js";
 import { createListingReader } from "../public/js/listing-input.js";
-import { STORAGE_KEY as AUTH_KEY } from "../public/js/auth.js";
+import { createListingStore } from "../public/js/listing-store.js";
 import { searchServices } from "../public/js/search.js";
 import { createTools } from "../public/js/tools.js";
 import * as data from "../public/js/data.js";
+import { sqlite } from "./sqlite-engine.js";
 
 function fakeStorage(initial = {}) {
   const items = new Map(Object.entries(initial));
@@ -55,20 +56,21 @@ const input = (overrides = {}) => ({
 
 const WED_1000 = new Date("2026-11-25T08:00:00Z");
 
-/** A page: its own copy of the catalog (60 listings, svc-001 to svc-060) and the given storage. */
-function page(storage) {
+/** A page: its own copy of the catalog (60 listings, svc-001 to svc-060) and its own database over the given storage. */
+function page(storage, { withoutStore = false } = {}) {
   const catalog = { ...data, listings: [...data.listings] };
-  const userListings = createUserListings({ catalog, read: createListingReader(catalog), storage });
+  const store = withoutStore ? undefined : createListingStore({ sqlite, storage });
+  const userListings = createUserListings({ catalog, read: createListingReader(catalog), store });
   return { catalog, userListings, appended: userListings.sync() };
 }
 
-const storedRecords = (storage) => JSON.parse(storage.items.get(STORAGE_KEY));
+/** What a freshly loaded page finds in the storage. */
+const storedRecords = (storage) => createListingStore({ sqlite, storage }).records();
 
 test("new service: nothing is stored at the start and the catalog is as it was", () => {
   const { catalog, appended } = page(fakeStorage());
   assert.deepEqual(appended, []);
   assert.equal(catalog.listings.length, data.listings.length);
-  assert.notEqual(STORAGE_KEY, AUTH_KEY);
 });
 
 test("new service: an added listing gets the next id, goes to the end of the catalog and into the storage", () => {
@@ -87,8 +89,8 @@ test("new service: an added listing gets the next id, goes to the end of the cat
 
   const records = storedRecords(storage);
   assert.equal(records.length, 1);
-  assert.deepEqual(Object.keys(records[0]), ["id", "addedBy", "input"]);
-  assert.equal(records[0].id, "svc-61");
+  assert.deepEqual(Object.keys(records[0]), ["number", "addedBy", "input"]);
+  assert.equal(records[0].number, 61);
   assert.equal(records[0].addedBy, "jonas");
   assert.equal(records[0].input.title, "Dviračių remontas namuose");
 });
@@ -99,7 +101,7 @@ test("new service: a second listing gets the id after it and both are stored", (
   userListings.add(input(), "jonas");
   const second = userListings.add(input({ title: "Paspirtukų remontas" }), "ona");
   assert.equal(second.listing.id, "svc-62");
-  assert.deepEqual(storedRecords(storage).map((record) => [record.id, record.addedBy]), [["svc-61", "jonas"], ["svc-62", "ona"]]);
+  assert.deepEqual(storedRecords(storage).map((record) => [record.number, record.addedBy]), [[61, "jonas"], [62, "ona"]]);
 });
 
 test("new service: wrong input adds nothing and stores nothing", () => {
@@ -164,48 +166,39 @@ test("new service: two tabs adding one after the other do not use the same id", 
   // This tab has not heard of svc-61 yet; add() looks into the storage first.
   assert.equal(here.userListings.add(input({ title: "Antroji paslauga" }), "jonas").listing.id, "svc-62");
   assert.deepEqual(here.catalog.listings.slice(-2).map((listing) => listing.title), ["Pirmoji paslauga", "Antroji paslauga"]);
-  assert.deepEqual(storedRecords(storage).map((record) => record.id), ["svc-61", "svc-62"]);
+  assert.deepEqual(storedRecords(storage).map((record) => record.number), [61, 62]);
 });
 
-test("new service: damaged storage entries are left out and do not stop the page", () => {
-  const good = { id: "svc-70", addedBy: "jonas", input: input() };
-  const records = [
-    null, "text", 5, [],
-    { id: "svc-71", addedBy: "jonas", input: input({ title: "" }) },   // no longer valid
-    { id: "svc-72", addedBy: "jonas" },                                // no input
-    { id: "svc-001", addedBy: "jonas", input: input() },               // id of a catalog listing
-    { id: "svc-0001", addedBy: "jonas", input: input() },              // the same listing, padded differently
-    { id: "other-5", addedBy: "jonas", input: input() },
-    { id: 73, addedBy: "jonas", input: input() },
-    good,
-    { ...good },                                                       // twice
-    { id: "svc-74", addedBy: { name: "x" }, input: input() },          // who added it is not a string
-  ];
-  const { catalog, appended, userListings } = page(fakeStorage({ [STORAGE_KEY]: JSON.stringify(records) }));
-  assert.deepEqual(appended.map((listing) => [listing.id, listing.addedBy]), [["svc-70", "jonas"], ["svc-74", ""]]);
-  assert.equal(catalog.listings.length, data.listings.length + 2);
-  assert.equal(userListings.add(input(), "ona").listing.id, "svc-75");
+test("new service: stored listings that are not valid are left out, and their numbers are not given out again", () => {
+  const storage = fakeStorage();
+  const store = createListingStore({ sqlite, storage });
+  store.append({ number: 1, addedBy: "jonas", input: input() });                 // number of a catalog listing
+  store.append({ number: 70, addedBy: "jonas", input: input() });
+  store.append({ number: 71, addedBy: "jonas", input: input({ title: "" }) });  // no longer valid
+  for (const [index, value] of [null, "text", 5, [], {}].entries()) store.append({ number: 72 + index, addedBy: "ona", input: value });
 
-  for (const value of ["not json", "{}", "null", '"text"', "5"]) {
-    const storage = fakeStorage({ [STORAGE_KEY]: value });
-    const damaged = page(storage);
-    assert.deepEqual(damaged.appended, [], value);
-    const result = damaged.userListings.add(input(), "jonas");
-    assert.equal(result.saved, true, value);
-    assert.deepEqual(storedRecords(storage).map((record) => record.id), ["svc-61"], value);
-  }
+  const { catalog, appended, userListings } = page(storage);
+  assert.deepEqual(appended.map((listing) => [listing.id, listing.addedBy]), [["svc-70", "jonas"]]);
+  assert.equal(catalog.listings.length, data.listings.length + 1);
+  assert.deepEqual(userListings.sync(), [], "the ones left out are not read again");
+
+  const result = userListings.add(input(), "ona");
+  assert.equal(result.listing.id, "svc-77");
+  assert.equal(result.saved, true);
+  assert.equal(storedRecords(storage).length, 9);
 });
 
 test("new service: stored input cannot make a listing verified or rated", () => {
-  const record = { id: "svc-70", addedBy: "jonas", input: { ...input(), verified: true, rating: { average: 5, count: 500 } }, verified: true };
-  const { appended } = page(fakeStorage({ [STORAGE_KEY]: JSON.stringify([record]) }));
+  const storage = fakeStorage();
+  createListingStore({ sqlite, storage }).append({ number: 70, addedBy: "jonas", input: { ...input(), verified: true, rating: { average: 5, count: 500 } } });
+  const { appended } = page(storage);
   assert.equal(appended[0].provider.verified, false);
   assert.deepEqual(appended[0].rating, { average: 0, count: 0 });
 });
 
-test("new service: without a working storage the listing is added for this page and reported as not saved", () => {
-  for (const storage of [undefined, brokenStorage]) {
-    const { catalog, appended, userListings } = page(storage);
+test("new service: without a working storage, or without a database, the listing is added for this page and reported as not saved", () => {
+  for (const options of [{}, { storage: brokenStorage }, { withoutStore: true }]) {
+    const { catalog, appended, userListings } = page(options.storage, options);
     assert.deepEqual(appended, []);
     const result = userListings.add(input(), "jonas");
     assert.equal(result.ok, true);
@@ -223,5 +216,5 @@ test("new service: a storage that is full keeps what it had and reports the list
   const result = userListings.add(input(), "jonas");
   assert.equal(result.ok, true);
   assert.equal(result.saved, false);
-  assert.deepEqual(storedRecords(storage).map((record) => record.id), ["svc-61"]);
+  assert.deepEqual(storedRecords(storage).map((record) => record.number), [61]);
 });

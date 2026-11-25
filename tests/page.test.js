@@ -14,6 +14,11 @@ const RELAY_URL = "https://cdn.jsdelivr.net/npm/@mcp-b/webmcp-local-relay@6.2.0/
 const POLYFILL_SHA256 = "e6d042e734e1dd08a455f249936ab045575c19fddf860f7e120a0dcaf350f05c";
 // SHA-384 of embed.js in @mcp-b/webmcp-local-relay@6.2.0. The browser refuses the script if the CDN serves other bytes.
 const RELAY_INTEGRITY = "sha384-TdRkxKVAOiJ9BvMYRwxw+u7/H9nqwfD2Ovc2wXVGXrmWiqjGH+ONecZxIfnfqQIa";
+// dist/index.mjs (kept here as sqlite3.js) and dist/sqlite3.wasm of @sqlite.org/sqlite-wasm@3.54.1-build1.
+const SQLITE_SHA256 = {
+  "vendor/sqlite3.js": "0dcdd860e6ec672623b13b8b8e41bb6c78be7a5df80ec553fc4f69160161c8af",
+  "vendor/sqlite3.wasm": "b8a92a19f441a90ff2339fe988fbe317c4adf3ed844096f12aee04aa72d58257",
+};
 
 const attributes = (tag) => Object.fromEntries([...tag.matchAll(/([\w-]+)(?:="([^"]*)")?/g)].slice(1).map((m) => [m[1], m[2] ?? ""]));
 const tags = (name) => [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, "g"))].map((m) => ({ index: m.index, attrs: attributes(m[0]) }));
@@ -84,6 +89,29 @@ test("AC8.2 the vendored polyfill is unchanged and ships with its licence", () =
   const hash = createHash("sha256").update(readFileSync(join(publicDir, "vendor/webmcp-polyfill.js"))).digest("hex");
   assert.equal(hash, POLYFILL_SHA256);
   assert.match(read("vendor/LICENSE-webmcp-polyfill.txt"), /Apache License\s+Version 2\.0/);
+});
+
+test("sqlite: the vendored build is unchanged, ships with its licence and is loaded by sqlite.js alone", () => {
+  for (const [file, expected] of Object.entries(SQLITE_SHA256)) {
+    assert.equal(createHash("sha256").update(readFileSync(join(publicDir, file))).digest("hex"), expected, file);
+  }
+  assert.match(read("vendor/LICENSE-sqlite-wasm.txt"), /Apache License\s+Version 2\.0/);
+  // sqlite3.js fetches the .wasm file from beside itself, under this name.
+  assert.match(read("vendor/sqlite3.js"), /new URL\("sqlite3\.wasm", import\.meta\.url\)/);
+
+  // Loaded on request and not from index.html, so the page never waits for it to show the catalog.
+  assert.doesNotMatch(html, /sqlite3/);
+  const loaded = ownScripts.flatMap((file) => [...read(`js/${file}`).matchAll(/\bimport\(\s*"([^"]+)"\s*\)/g)].map((m) => `${file}: ${m[1]}`));
+  assert.deepEqual(loaded, ["sqlite.js: ../vendor/sqlite3.js"]);
+});
+
+test("sqlite: the page shows the catalog first, then loads the stored listings, then registers the tools", () => {
+  const appSource = read("js/app.js");
+  const start = appSource.indexOf("// ── Start");
+  const shown = appSource.indexOf("\nrender();", start);
+  const loaded = appSource.indexOf("\nawait openUserListings();", start);
+  const registered = appSource.indexOf("registerTools(", start);
+  assert.ok(start !== -1 && start < shown && shown < loaded && loaded < registered, `${start} < ${shown} < ${loaded} < ${registered}`);
 });
 
 test("AC1.4 and AC1.5 the page has a demo banner, no outside links and no form except the sign-in and the new service", () => {

@@ -3,7 +3,7 @@
 A one-page services directory in the style of paslaugos.lt, with 10,000 fictional providers from Lithuania, Latvia and Estonia.
 AI agents search it through three WebMCP tools, and a fourth tool lets an agent fill in the new-service form for the
 visitor to submit. The site has no backend. It has two forms: a demo sign-in, and a form that adds a service and keeps it
-in the visitor's own browser.
+in the visitor's own browser, in a SQLite database that runs inside the page.
 
 **All shipped data is invented.** Emails and websites use the reserved `.example` domain, and phone numbers start with `000`, which no Baltic operator assigns.
 A service added with the form holds whatever its author typed; it never leaves that browser.
@@ -39,7 +39,8 @@ list (see Relay below).
 npm test
 ```
 
-No install step: the tests use Node's built-in runner (Node 22 or newer). Run them once more with another machine time zone to check the date logic:
+No install step: the tests use Node's built-in runner and, for the listing database, Node's built-in SQLite
+(`node:sqlite`, Node 22.13 or newer). Run them once more with another machine time zone to check the date logic:
 
 ```bash
 TZ=America/New_York npm test
@@ -68,7 +69,7 @@ The header has a **Prisijungti** button that opens a sign-in dialog. Two demo us
 The header has a **Pridėti paslaugą** button that opens the new-service form. A signed-out visitor gets the sign-in
 dialog first and the form right after signing in.
 
-- There is no backend, so a new service is kept in `localStorage` under `webmcp-services.listings`. It is visible only in
+- There is no backend, so a new service is kept in a SQLite database in the browser (see below). It is visible only in
   that browser, in all tabs of the site, and survives a reload. Clearing the site data removes it; the page has no
   button to edit or delete a service yet.
 - A new service is a normal listing: the list, the filters and the three search tools find it. It gets the next free id
@@ -83,11 +84,44 @@ dialog first and the form right after signing in.
   country prefix (`08318` becomes `LT-08318`).
 - What is stored is the form input, not the finished listing. Every page load reads it through the same checks, so a
   damaged or hand-edited entry is skipped instead of breaking the page.
-- Where `localStorage` is blocked or full, the service is added until the reload and the page says so.
+- Where `localStorage` is blocked or full, or SQLite could not start, the service is added until the reload and the
+  page says so.
 - Like the sign-in, the form has `method="dialog"` and no `action`: nothing is sent anywhere.
 - A form that is cancelled keeps what was typed; it is emptied after the service is added.
 - An agent can fill in the form with the `draft_service` tool (see below). The form then shows a line saying that an AI
   agent filled it in. Only the person can submit it.
+
+### The SQLite database
+
+The added services are rows of one table, in SQLite compiled to WebAssembly and running in the page. Nothing runs on a
+server, so this works the same from Docker and from GitHub Pages.
+
+```sql
+CREATE TABLE listings (
+  number INTEGER PRIMARY KEY CHECK (number BETWEEN 1 AND 999999999),  -- the 10001 of svc-10001
+  added_by TEXT NOT NULL,                                             -- username
+  input TEXT NOT NULL CHECK (json_valid(input))                       -- the form input as JSON
+) STRICT
+```
+
+- The database lives in memory. After every change its whole image (the bytes of a normal SQLite file, base64-encoded)
+  is written to `localStorage` under `webmcp-services.db`. With a few services it takes about 22 KB there and it grows
+  by roughly 2 KB per service, so the usual 5 MB limit is far away.
+- It is one value written in one step, so another tab never reads half a change; a tab reads the database again when
+  the stored value is not the one it last saw. SQLite's own `localStorage` backend (kvvfs) is not used: it writes page
+  by page and its locks work inside one tab only.
+- Two tabs that add a service in the same instant can still overwrite each other, as with any `localStorage` value.
+- The engine is `vendor/sqlite3.js` and `vendor/sqlite3.wasm`: unchanged copies of `dist/index.mjs` and
+  `dist/sqlite3.wasm` from the official [`@sqlite.org/sqlite-wasm`](https://www.npmjs.com/package/@sqlite.org/sqlite-wasm)
+  package, version 3.54.1-build1 (Apache-2.0; SQLite itself is in the public domain). A test pins both by SHA-256. To
+  update, replace the two files and the hashes in `tests/page.test.js`.
+- The two files are about 1.5 MB together. The page shows the catalog first and loads them after, so the first paint
+  does not wait; the saved services appear a moment later, and the WebMCP tools are registered once they are in.
+- Services saved by an earlier version of the page (a JSON list under `webmcp-services.listings`) are moved into the
+  database on the first load and the old value is removed.
+- A stored value that is not a usable database is ignored and replaced by the next service that is added.
+- To look inside, copy the value from the browser's developer tools and decode it:
+  `base64 -d < value.txt > listings.db`, then `sqlite3 listings.db "SELECT * FROM listings"`.
 
 ## Tools
 
@@ -141,6 +175,7 @@ The first three tools only read. `draft_service` is the one tool that changes th
 public/
   index.html, styles.css
   vendor/webmcp-polyfill.js   W3C polyfill, unchanged copy; a no-op where the browser has WebMCP
+  vendor/sqlite3.js, .wasm    SQLite compiled to WebAssembly, unchanged copies from @sqlite.org/sqlite-wasm
   js/data.js                  categories, countries, city aliases, 60 hand-written listings
   js/generate.js              seeded generator for the other 9,940 listings
   js/catalog.js               data.js + generated listings = the 10,000 the page and tools use
@@ -152,9 +187,13 @@ public/
   js/auth.js                  two demo users, createAuth({ storage }): signIn, signOut, currentUser
   js/listing-input.js         createListingReader(catalog): form values in, a listing or a list of errors out;
                               inputOfListing(listing): the way back, used to fill the form from a draft
-  js/user-listings.js         createUserListings({ catalog, read, storage }): sync, add; added listings in localStorage
+  js/user-listings.js         createUserListings({ catalog, read, store }): sync, add; added listings from the store
+  js/listing-store.js         createListingStore({ sqlite, storage }): records, append; the SQLite database of added
+                              listings and its image in localStorage
+  js/sqlite.js                loadSqlite(): starts vendor/sqlite3.js and wraps it into open, exec, rows, image
   js/app.js                   page rendering and wiring
-tests/                        one file per module, plus page.test.js for index.html rules
+tests/                        one file per module, plus page.test.js for index.html rules and sqlite-engine.js,
+                              the same engine calls on node:sqlite
 ```
 
 The page and the tools call the same `searchServices`, so a tool answer and the visible list agree.

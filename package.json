@@ -5,7 +5,7 @@
   "description": "Demo services directory with WebMCP tools. All data is fictional.",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "scripts": {
     "test": "node --test"

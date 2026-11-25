@@ -5,7 +5,9 @@ import * as baseCatalog from "./catalog.js";
 import { computeAvailability } from "./availability.js";
 import { browserStorage, createAuth } from "./auth.js";
 import { createListingReader, WEEKDAY_LABEL } from "./listing-input.js";
+import { createListingStore } from "./listing-store.js";
 import { searchServices, SORT_OPTIONS } from "./search.js";
+import { loadSqlite } from "./sqlite.js";
 import { createTools } from "./tools.js";
 import { createUserListings } from "./user-listings.js";
 import { registerTools } from "./webmcp.js";
@@ -430,20 +432,37 @@ function bindAccount() {
   // Signing in or out, or adding a service, in another tab of this site.
   window.addEventListener("storage", () => {
     renderAccount();
-    const added = userListings.sync();
-    if (added.length > 0) {
-      adopt(added);
-      render();
-    }
+    showStoredListings();
   });
 }
 
 // ── New service: a form for signed-in users; the listing stays in this browser ──
 
-const userListings = createUserListings({ catalog, read: createListingReader(catalog), storage: browserStorage() });
+// The added listings are in a SQLite database, which is loaded after the page is shown: null until then.
+let userListings = null;
+
+async function openUserListings() {
+  let store;
+  try {
+    store = createListingStore({ sqlite: await loadSqlite(), storage: browserStorage() });
+  } catch (error) {
+    // No WebAssembly, or the SQLite files did not arrive: the form still works, and says that nothing was saved.
+    console.warn("SQLite did not start; added services will not be saved.", error);
+  }
+  userListings = createUserListings({ catalog, read: createListingReader(catalog), store });
+  showStoredListings();
+}
 
 function adopt(listings) {
   for (const listing of listings) listingById.set(listing.id, listing);
+}
+
+/** Take in the stored listings the page does not show yet: the saved ones, then the ones added in another tab. */
+function showStoredListings() {
+  const added = userListings?.sync() ?? [];
+  if (added.length === 0) return;
+  adopt(added);
+  render();
 }
 
 // One row per weekday: a checkbox for "works that day" and the two times.
@@ -613,6 +632,11 @@ function bindServiceForm() {
       showServiceErrors([], "Esate atsijungę. Uždarykite formą ir prisijunkite iš naujo: įvesti duomenys išliks.");
       return;
     }
+    if (!userListings) {
+      event.preventDefault();
+      showServiceErrors([], "Duomenų bazė dar kraunama. Pabandykite dar kartą po akimirkos: įvesti duomenys išliks.");
+      return;
+    }
     const result = userListings.add(serviceInput(), user.username);
     if (!result.ok) {
       event.preventDefault();
@@ -651,7 +675,6 @@ bindControls();
 bindAccount();
 bindServiceForm();
 renderAccount();
-adopt(userListings.sync());
 render();
 
 // "Dirba dabar" depends on the clock, so refresh once a minute while the page is visible.
@@ -661,5 +684,7 @@ setInterval(() => {
   if (!document.hidden && !usingControls) render();
 }, 60_000);
 
+// The tools are registered once the stored listings are in the catalog, so an agent never searches without them.
+await openUserListings();
 const tools = createTools({ catalog, now: () => new Date(), showFilters, showListing, showDraft });
 await registerTools(tools);
