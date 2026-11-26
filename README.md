@@ -297,6 +297,7 @@ The first three tools only read. `draft_service` is the one tool that changes th
 ```
 public/
   index.html, styles.css
+  favicon.svg                 the page's icon; named in index.html so no browser asks the host for /favicon.ico
   vendor/webmcp-polyfill.js   W3C polyfill, unchanged copy; a no-op where the browser has WebMCP
   js/config.js                the Supabase project: its URL and its publishable key
   js/supabase.js              createSupabase({ url, key, fetch }): rpc, select, insert, auth; the few calls, over fetch

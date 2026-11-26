@@ -8,6 +8,8 @@
     <!-- The hosted copy is shared by link only, so keep it out of search engines. -->
     <meta name="robots" content="noindex, nofollow">
     <link rel="stylesheet" href="styles.css">
+    <!-- Named here so the browser does not ask the host for /favicon.ico, which a page under a sub-path does not own. -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <!-- WebMCP polyfill first: it does nothing when the browser has document.modelContext natively. -->
     <script src="vendor/webmcp-polyfill.js"></script>
     <script type="module" src="js/app.js"></script>

@@ -29,6 +29,16 @@ test("AC1.6 every src and href is relative, except the one pinned relay script",
   }
 });
 
+test("the page names its own icon, so the browser never asks the host for /favicon.ico", () => {
+  const icons = tags("link").filter((link) => link.attrs.rel === "icon");
+  assert.deepEqual(icons.map((link) => link.attrs.href), ["favicon.svg"]);
+  assert.equal(icons[0].attrs.type, "image/svg+xml");
+  const svg = read("favicon.svg");
+  assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+  // The icon is a picture and nothing else: no script and no address to load.
+  assert.doesNotMatch(svg, /<script|\bon[a-z]+\s*=|href=|url\(/i);
+});
+
 test("AC7.1 no hard-coded host, port or absolute path in the page files", () => {
   assert.equal((html.match(/https?:\/\//g) ?? []).length, 1, "index.html has exactly one absolute URL");
   const css = read("styles.css");
