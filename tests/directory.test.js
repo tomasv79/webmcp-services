@@ -195,6 +195,33 @@ test("get: one listing by its number, or null", async () => {
   await assert.rejects(setup({}).directory.get(1), DirectoryError);
 });
 
+test("notes: the agent notes of one listing by its number, or null", async () => {
+  const row = { response_hours: 4, prepare: "A photo of the problem.", offer_code: "MCP-61-K7Q2", offer_percent: 10 };
+  const found = setup({ select: ok([row]) });
+  assert.deepEqual(await found.directory.notes(61), {
+    responseHours: 4,
+    prepare: "A photo of the problem.",
+    agentOffer: { code: "MCP-61-K7Q2", discountPercent: 10 },
+  });
+  assert.deepEqual(found.client.calls, [
+    ["select", "agent_notes", { select: "response_hours,prepare,offer_code,offer_percent", number: "eq.61" }],
+  ]);
+
+  // A listing that a visitor added has no row.
+  assert.equal(await setup({ select: ok([]) }).directory.notes(10_001), null);
+  // A row this page cannot read is left out instead of being passed on half-filled.
+  for (const broken of [{ ...row, response_hours: "4" }, { ...row, prepare: null }, { ...row, offer_code: undefined }, { ...row, offer_percent: 2.5 }, null, "x"]) {
+    assert.equal(await setup({ select: ok([broken]) }).directory.notes(61), null, JSON.stringify(broken));
+  }
+  assert.equal(await setup({ select: ok({ message: "not a list" }) }).directory.notes(61), null);
+
+  const none = setup({ select: ok([row]) });
+  for (const number of [0, -1, 1.5, NaN, "1", undefined]) assert.equal(await none.directory.notes(number), null);
+  assert.deepEqual(none.client.calls, []);
+
+  await assert.rejects(setup({}).directory.notes(1), DirectoryError);
+});
+
 test("counts: the numbers of the database, with empty tables where it gave none", async () => {
   const counts = { total: 61, categories: { plumbing: 5 }, cities: { Vilnius: 13 }, priceUnits: { hour: 30 }, languages: { lt: 40 } };
   const { client, directory } = setup({ rpc: ok(counts) });

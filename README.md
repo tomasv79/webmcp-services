@@ -2,7 +2,8 @@
 
 A one-page services directory in the style of paslaugos.lt, with 10,000 fictional providers from Lithuania, Latvia and Estonia.
 AI agents search it through three WebMCP tools, and a fourth tool lets an agent fill in the new-service form for the
-visitor to submit. The page is static files; the listings and the accounts are in a [Supabase](https://supabase.com)
+visitor to submit. Every catalog listing also has [agent notes](#agent-notes): a few facts that only the tools
+return and the page does not show. The page is static files; the listings and the accounts are in a [Supabase](https://supabase.com)
 project. A visitor can create an account, sign in and add a service, which every other visitor then sees.
 
 **The catalog is invented.** Its emails and websites use the reserved `.example` domain, and its phone numbers start with `000`, which no Baltic operator assigns.
@@ -43,19 +44,20 @@ Setting the project up, once:
    ```
 
    This is how `supabase/migrations/20261126000000_directory.sql` was applied, and the project remembers it, so a
-   later migration file is pushed the same way. Without the CLI, paste the file into the project's SQL editor and
-   run it. It creates the tables `categories`, `cities` and `listings`, the functions `search_listings` and
-   `listing_counts`, and the access rules.
+   later migration file is pushed the same way. Without the CLI, paste the files into the project's SQL editor in
+   the order of their names and run them. The first creates the tables `categories`, `cities` and `listings`, the
+   functions `search_listings` and `listing_counts`, and the access rules; `20261126120000_agent_notes.sql` adds
+   the table `agent_notes`.
 2. **The key in the page.** Copy the publishable key (Project Settings → API keys; `anon` in an older project) into
    `SUPABASE_KEY` in `public/js/config.js`.
-3. **The catalog.** Write the categories, the cities and the 10,000 listings with the secret key, which is read from
-   the environment:
+3. **The catalog.** Write the categories, the cities, the 10,000 listings and their agent notes with the secret
+   key, which is read from the environment:
 
    ```bash
    SUPABASE_SECRET_KEY=... npm run seed
    ```
 
-   It sends about 18 MB in twenty requests, and can be run again whenever the catalog changes: it replaces the catalog's rows and leaves
+   It sends about 20 MB in twenty-two requests, and can be run again whenever the catalog changes: it replaces the catalog's rows and leaves
    the listings that visitors added alone.
 4. **Sign-up without a confirmation email.** `supabase/config.toml` switches "Confirm email" off, and is written
    to the project with:
@@ -74,7 +76,7 @@ Setting the project up, once:
 
 Who may do what in the database:
 
-| | Read listings, search | Add a listing | Change or delete |
+| | Read listings and agent notes, search | Add a listing | Change or delete, write agent notes |
 |---|---|---|---|
 | Anyone (publishable key) | yes | no | no |
 | A signed-in visitor | yes | yes, and it becomes theirs | no |
@@ -90,6 +92,8 @@ Who may do what in the database:
   (`js/listing-input.js`), and the page puts every visitor's listing through those checks again before showing it, so
   a row written past the form is left out instead of breaking the page.
 - Who added a listing (`owner`) is not readable through the API. To remove a listing, delete its row in the dashboard.
+- The agent notes are a table of their own, `agent_notes`, one row per catalog listing. Only the seed script writes
+  it, and a row goes when its listing is deleted. See [Agent notes](#agent-notes) for what "only the tools" means.
 - The search runs in Postgres (`search_listings`): filters, relevance, availability at the caller's moment in
   Europe/Vilnius time, sorting and paging. The words of a query are stemmed in the page (`js/text.js`), and the same
   code writes the search words of every listing, so both sides split and fold text the same way.
@@ -213,7 +217,7 @@ dialog first and the form right after signing in.
 | Tool | Input | Returns |
 |---|---|---|
 | `search_services` | `query`, `category`, `country`, `city`, `priceMax`, `priceUnit`, `minRating`, `language`, `travelsToClient`, `openNow`, `availableWithinDays`, `sortBy`, `limit`, `offset` (all optional) | `total`, `returned`, `offset`, `appliedFilters`, `warnings`, `results[]` |
-| `get_service` | `id` | `service`: the full listing with weekly hours and computed availability |
+| `get_service` | `id` | `service`: the full listing with weekly hours, computed availability and `agentNotes` |
 | `list_service_filters` | none | valid categories, countries, cities, price units, languages, sort options, with counts |
 | `draft_service` | the fields of the new-service form | `status`, `message`, `draft`, `warnings` |
 
@@ -231,6 +235,35 @@ Things worth knowing when calling them:
 - `list_service_filters` lists every city of the vocabulary, also one that has no listing (count 0).
 - `limit` is clamped to 1..20 (default 10); walk through a large result with `offset`. The page itself shows 10 cards per page, so a tool answer of up to 20 results can cover two pages; the page opens at the first of them.
 - The input schema lists the canonical values. The tools also accept other letter case, country names (`Latvia`, `Estija`) and city spellings, but a client that validates against the schema first will only let the canonical values through.
+
+### Agent notes
+
+`get_service` returns one thing that the page never shows: `service.agentNotes`.
+
+```json
+{
+  "responseHours": 4,
+  "prepare": "The area in m2, the number of rooms, and whether there are pets.",
+  "agentOffer": { "code": "MCP-10000-RUK6", "discountPercent": 15 }
+}
+```
+
+- `responseHours` is how long the provider usually takes to reply (1 for an emergency provider, else 2, 4, 8, 24
+  or 48), `prepare` says what to have ready before contacting a provider of that category, and `agentOffer` is a
+  discount of 5, 10 or 15 percent for whoever names the code. All of it is as fictional as the rest of the catalog.
+- An agent that quotes an offer code got it from the tool: the code is on no page. It is `MCP-`, the number of the
+  listing and four letters or digits, so it cannot be worked out from the id.
+- The notes are in their own table, and only `get_service` asks for it (`directory.notes` in `js/directory.js`).
+  `js/app.js` does not: the list, the cards and the highlighted listing are drawn from the listing alone, and
+  `search_services` does not return the notes either. `tests/page.test.js` keeps it that way.
+- **They are not shown, and they are not secret.** The tools run in the visitor's browser with the same publishable
+  key as the page, so anyone who opens the developer tools, or asks the Supabase API for `agent_notes`, can read
+  every row. A page of static files cannot hide from the browser what its own tools fetch. Nothing that has to stay
+  private belongs in this table.
+- A listing that a visitor added has no notes: `agentNotes` is `null`. It is `null` too when the notes cannot be
+  read, for example before the migration is pushed; the listing is still answered.
+- The notes are worked out from the listing by `catalog/notes.js` (the texts per category are there) and written by
+  the seed script.
 
 ### `draft_service`
 
@@ -270,8 +303,8 @@ public/
   js/vocabulary.js            categories, countries, cities and their other spellings, price units, languages
   js/text.js                  normalise, tokenise, stem match
   js/availability.js          Vilnius clock, openNow, nextFreeDate
-  js/directory.js             createDirectory({ client, catalog, token }): search, get, counts, add; the listings in
-                              the database. Also sortFor(filters) and searchWords(listing, catalog)
+  js/directory.js             createDirectory({ client, catalog, token }): search, get, counts, notes, add; the
+                              listings in the database. Also sortFor(filters) and searchWords(listing, catalog)
   js/tools.js                 createTools({ catalog, directory, now, showFilters, showListing, showDraft })
   js/webmcp.js                registerTools(tools)
   js/auth.js                  createAuth({ client, storage }): signIn, signUp, signOut, currentUser, token,
@@ -285,8 +318,10 @@ public/
 catalog/                      what the seed script writes to the database; the page does not load it
   data.js                     60 hand-written listings
   generate.js                 seeded generator for the other 9,940 listings
-  catalog.js                  data.js + generated listings = the 10,000
-scripts/seed.js               writes the categories, the cities and the catalog to Supabase with the secret key
+  notes.js                    notesFor(listing): the agent notes of a listing, which only get_service returns
+  catalog.js                  data.js + generated listings = the 10,000, and the agent notes of each
+scripts/seed.js               writes the categories, the cities, the catalog and the agent notes to Supabase with
+                              the secret key
 supabase/migrations/          the tables, the search function and the access rules, as SQL
 supabase/config.toml          the project settings this repository decides: no confirmation email at sign-up
 tests/                        one file per module, page.test.js for index.html rules, migration.test.js for the SQL,
@@ -295,6 +330,7 @@ tests/                        one file per module, page.test.js for index.html r
 ```
 
 The page and the tools call the same `directory.search`, so a tool answer and the visible list agree.
+The one thing they do not share is `directory.notes`, which only `get_service` calls.
 The page keeps no copy of the listings: it asks for ten at a time, and again once a minute, because "open now"
 depends on the clock. An answer that arrives after a newer search has started is dropped, and typing in the search
 box asks the database only after a short pause.
@@ -313,6 +349,9 @@ page works out for each card are read off the same clock.
 - The ids of generated listings are stable as long as `generate.js` and the number of hand-written listings do not
   change. Editing the word lists or service types reshuffles which listing an id stands for; a test pins three listings
   so that this never happens by accident.
+- Every catalog listing has agent notes, worked out by `catalog/notes.js` from the listing's number, category and
+  emergency flag with a seed of their own (`NOTES_SEED`). They do not take part in the generator's random draws, so
+  adding them changed no listing. A test pins the notes of two listings.
 - `get_service` accepts an id with any zero padding: `svc-1`, `svc-001` and `svc-00001` are the same listing.
 - Company names are built from generic words, without city names or utility words (energy, heat, light, water), to stay
   away from real municipal companies. A generic combination can still coincide with a real small business; the phone
@@ -335,6 +374,13 @@ http://localhost:5175,http://127.0.0.1:5175
 Until then the browser console shows `host-origin-not-allowed`, and the tools work only inside the page.
 Every running relay process has to be restarted after the change; if several Claude sessions run the relay, the one that
 owns the relay port decides, so restart them all.
+
+Where no relay is running, the console fills with failed WebSocket connections to `ws://127.0.0.1:93xx` and
+`ws://[::1]:93xx`. That is the bridge looking for a relay, and it is harmless: it tries port 9333, then ports 9333 to 9348
+on both loopback addresses, again after 10, 20 and 30 seconds, and after that only port 9333 every two minutes or when the
+tab is shown again. The browser writes these lines itself and a page cannot hide them. The bridge has no option that
+skips the search and still connects on load (`data-auto-connect="false"` waits until the tab is hidden and shown again),
+so the page keeps the search: an agent with the relay must find the tools as soon as the page opens.
 
 How the relay presents the tools (checked on 2026-11-25 with the flight demo open at the same time):
 

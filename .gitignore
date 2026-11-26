@@ -1,5 +1,8 @@
 node_modules/
 .DS_Store
 .idea/
+# Secret keys for this machine only. Never committed.
+.env
+.env.*
 # Written by the Supabase CLI: which project and versions it last talked to.
 supabase/.temp/

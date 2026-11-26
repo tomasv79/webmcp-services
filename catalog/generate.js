@@ -251,7 +251,7 @@ const SERVICES = {
 };
 
 /** Small, fast, well-known 32-bit generator. Same seed, same sequence, in every JavaScript engine. */
-function mulberry32(seed) {
+export function mulberry32(seed) {
   let state = seed >>> 0;
   return () => {
     state = (state + 0x6d2b79f5) | 0;

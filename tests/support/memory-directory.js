@@ -2,10 +2,11 @@
 // worked out by the reference search over a list of listings in memory.
 
 import { searchServices } from "./reference-search.js";
+import { notesFor } from "../../catalog/notes.js";
 
 /**
  * @param {object} catalog  The vocabulary plus `listings`; a listing pushed to catalog.listings is found at once.
- * @returns {{ search: Function, get: Function, counts: Function }}
+ * @returns {{ search: Function, get: Function, counts: Function, notes: Function }}
  */
 export function createMemoryDirectory(catalog) {
   const countOf = (keys) => {
@@ -20,6 +21,11 @@ export function createMemoryDirectory(catalog) {
     },
     async get(number) {
       return catalog.listings.find((listing) => Number(listing.id.slice(4)) === number) ?? null;
+    },
+    /** A listing of the catalog has notes; one that a visitor added has none. */
+    async notes(number) {
+      const listing = catalog.listings.find((each) => Number(each.id.slice(4)) === number);
+      return listing && listing.added !== true ? notesFor(listing) : null;
     },
     async counts() {
       const { listings } = catalog;

@@ -41,7 +41,7 @@ test("migration: the search function takes every argument the page sends, and kn
 });
 
 test("migration: visitors may read and add, and nothing else", () => {
-  for (const table of ["categories", "cities", "listings"]) {
+  for (const table of ["categories", "cities", "listings", "agent_notes"]) {
     assert.ok(sql.includes(`alter table public.${table} enable row level security;`), `${table} has row-level security`);
   }
   assert.doesNotMatch(sql, /for (update|delete|all) /i, "no policy lets a visitor change or delete");
@@ -49,6 +49,10 @@ test("migration: visitors may read and add, and nothing else", () => {
   // A visitor sends the listing and its search words; the number and the owner are the database's to set.
   assert.match(sql, /grant insert \(data, strong, weak\) on public\.listings to authenticated;/);
   assert.doesNotMatch(sql, /grant insert[^;]*\banon\b/);
+  // The agent notes are read-only for everyone but the seed script, and belong to a listing that exists.
+  assert.match(sql, /grant select on public\.agent_notes to anon, authenticated;/);
+  assert.doesNotMatch(sql, /grant insert[^;]*agent_notes/);
+  assert.match(sql, /number integer primary key references public\.listings \(number\) on delete cascade/);
   // Who added a listing is not readable through the API.
   const readable = /grant select \(([^)]*)\) on public\.listings to anon, authenticated;/.exec(sql)[1].split(",").map((name) => name.trim());
   assert.ok(readable.includes("data") && readable.includes("added"));

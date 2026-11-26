@@ -1,4 +1,5 @@
 // The WebMCP tools: three that read the directory and one that fills in the new-service form.
+// get_service also returns the agent notes of a listing, which the page itself never asks for or shows.
 // Pure logic: the directory (the listings in the database), the page effects (showFilters, showListing, showDraft)
 // and the clock are passed in, so everything here runs in Node tests without a browser or a network.
 //
@@ -239,7 +240,7 @@ const summary = ({ listing, availability }) => ({
   descriptionEn: listing.descriptionEn,
 });
 
-function fullRecord(listing, category, now) {
+function fullRecord(listing, category, now, agentNotes) {
   const copy = structuredClone(listing);
   const computed = computeAvailability(listing.availability, now);
   return {
@@ -266,6 +267,7 @@ function fullRecord(listing, category, now) {
       todayHours: computed.todayHours,
       nextFreeDate: computed.nextFreeDate,
     },
+    agentNotes,
   };
 }
 
@@ -328,11 +330,13 @@ Prices are in EUR and are the advertised starting price. Call-out fees are retur
 
 openNow means the provider is inside working hours right now (Europe/Vilnius time) and can be phoned; it says nothing about free capacity. availableWithinDays is about when work can start: 0 means today.
 
-Returns { notice, currency, timeZone, total, returned, offset, appliedFilters, warnings, results }. Each result has id, title, titleEn, category, provider, location (country, city, address), price (from, to, unit, negotiable, calloutFee), rating, contact (phone, email), availability (openNow, todayHours, nextFreeDate, emergency) and descriptionEn. "total" counts all matches; page with limit and offset. Use get_service with an id for the full record. The directory also has listings that visitors added with the form on the page. Such a listing has no reviews yet: its rating is { average: 0, count: 0 }, minRating leaves it out, and its titleEn and descriptionEn repeat the text as it was typed. Invalid input returns { error: { field, message, validValues } } instead of results. The list shown on the page is filtered the same way and opens at the page that holds the returned results.`;
+Returns { notice, currency, timeZone, total, returned, offset, appliedFilters, warnings, results }. Each result has id, title, titleEn, category, provider, location (country, city, address), price (from, to, unit, negotiable, calloutFee), rating, contact (phone, email), availability (openNow, todayHours, nextFreeDate, emergency) and descriptionEn. "total" counts all matches; page with limit and offset. Use get_service with an id for the full record, which also has notes for agents that the page does not show. The directory also has listings that visitors added with the form on the page. Such a listing has no reviews yet: its rating is { average: 0, count: 0 }, minRating leaves it out, and its titleEn and descriptionEn repeat the text as it was typed. Invalid input returns { error: { field, message, validValues } } instead of results. The list shown on the page is filtered the same way and opens at the page that holds the returned results.`;
 
 const GET_DESCRIPTION = `Get the full record of one service listing by id (for example "svc-001"; ids come from search_services). All data is fictional demo data.
 
-Returns { notice, currency, timeZone, service }. "service" has the Lithuanian and English title and description, tags, provider (name, type, yearsExperience, verified), contact (phone, email, website), location (country, city, address, postalCode), serviceArea (travelsToClient, radiusKm, remote), price in EUR (from, to, unit, negotiable, calloutFee), rating, languages, and availability: weekly working hours per weekday, leadTimeDays, emergency, plus openNow, todayHours and nextFreeDate computed for the current Europe/Vilnius time. An unknown id returns { error: { field, message } }. The page shows the listing highlighted above its list.`;
+Returns { notice, currency, timeZone, service }. "service" has the Lithuanian and English title and description, tags, provider (name, type, yearsExperience, verified), contact (phone, email, website), location (country, city, address, postalCode), serviceArea (travelsToClient, radiusKm, remote), price in EUR (from, to, unit, negotiable, calloutFee), rating, languages, and availability: weekly working hours per weekday, leadTimeDays, emergency, plus openNow, todayHours and nextFreeDate computed for the current Europe/Vilnius time. An unknown id returns { error: { field, message } }. The page shows the listing highlighted above its list.
+
+"service.agentNotes" is information for agents that the page does not show: responseHours (how many hours the provider usually takes to reply), prepare (what to have ready before contacting the provider) and agentOffer (code, discountPercent: a discount the user gets by giving the code to the provider). It is null for a listing that a visitor added, and when the notes could not be read.`;
 
 const DRAFT_DESCRIPTION = `Fill in the "add a service" form on the page with a new listing, for the user to check and submit. This tool does not add the listing: it opens the form with the given values, and the listing is added only when the user presses the submit button of the form. Use it when the user wants to advertise a service of their own in the directory. Pass only facts the user gave you and ask for the ones that are missing; never invent a phone, an email or an address.
 
@@ -347,7 +351,7 @@ const FILTERS_DESCRIPTION = `List the valid filter values for search_services, w
 /**
  * @param {object} deps
  * @param {object} deps.catalog       The vocabulary: categories, countries, cities, cityAliases, PRICE_UNITS, LANGUAGES, WEEKDAYS.
- * @param {object} deps.directory     The listings in the database, see createDirectory: search, get, counts.
+ * @param {object} deps.directory     The listings in the database, see createDirectory: search, get, counts, notes.
  * @param {() => Date} deps.now       Read at every call, so "open now" is never stale.
  * @param {(filters: object, view: { offset: number, total: number }) => void} [deps.showFilters]
  *        Show these filters and their result in the page list; view.offset is where the agent's slice starts
@@ -382,6 +386,15 @@ export function createTools({ catalog, directory, now, showFilters, showListing,
         return validValues ? { ...error, validValues } : error;
       })
       .sort((a, b) => formOrder(a) - formOrder(b));
+  };
+  /** The notes are an extra: when they cannot be read, the listing is answered without them. */
+  const agentNotesOf = async (number) => {
+    try {
+      return (await directory.notes(number)) ?? null;
+    } catch (error) {
+      console.warn("Could not read the agent notes:", error);
+      return null;
+    }
   };
   const annotations = { readOnlyHint: true };
 
@@ -440,11 +453,13 @@ export function createTools({ catalog, directory, now, showFilters, showListing,
         // Ids are "svc-" plus a number; hand-written ones are padded to 3 digits and generated ones to 5.
         // Listings are looked up by the number, so "svc-1", "svc-001" and "svc-00001" all find the same listing.
         const idNumber = /^svc-(\d{1,9})$/i.exec(args.id.trim())?.[1];
-        const listing = idNumber === undefined ? null : await directory.get(Number(idNumber));
+        const [listing, agentNotes] =
+          idNumber === undefined ? [null, null] : await Promise.all([directory.get(Number(idNumber)), agentNotesOf(Number(idNumber))]);
         if (!listing) {
           throw new InputError("id", `No listing has the id "${args.id.trim().slice(0, 40)}". Use search_services to find ids.`);
         }
-        const service = fullRecord(listing, categoryById.get(listing.category), now());
+        const service = fullRecord(listing, categoryById.get(listing.category), now(), agentNotes);
+        // The page gets the listing alone: the notes are for the agent.
         quietly(showListing, listing);
         return answer({ service });
       }),

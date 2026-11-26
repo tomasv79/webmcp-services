@@ -1,5 +1,5 @@
 // The directory: the listings in the Supabase database. One search for the page and for the WebMCP tools, so the
-// list on screen and a tool answer cannot disagree.
+// list on screen and a tool answer cannot disagree. The agent notes are the exception: only the tools read them.
 // Pure logic: the Supabase client and the session are passed in, and the caller passes the current time.
 //
 // The database filters, ranks and pages (search_listings in supabase/migrations). What stays here is everything
@@ -15,6 +15,7 @@ const MIXED_UNITS_WARNING =
   "Prices were compared across different units (per hour, job, m2, visit or day). Pass priceUnit to compare like with like.";
 
 const ID = /^svc-(\d{1,9})$/;
+const NOTE_COLUMNS = "response_hours,prepare,offer_code,offer_percent";
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The database could not be reached, or it refused the request. */
@@ -64,9 +65,10 @@ export function searchWords(listing, catalog) {
  *   search: (filters: object | undefined, now: Date) => Promise<{ total: number, all: number, offset: number, sortBy: string, items: Array<{ listing: object, availability: object, score: number }>, warnings: string[] }>,
  *   get: (number: number) => Promise<object | null>,
  *   counts: () => Promise<{ total: number, categories: object, cities: object, priceUnits: object, languages: object }>,
+ *   notes: (number: number) => Promise<{ responseHours: number, prepare: string, agentOffer: { code: string, discountPercent: number } } | null>,
  *   add: (listing: object) => Promise<{ ok: true, listing: object } | { ok: false, reason: "signedOut" | "limit" | "refused" | "unavailable" }>,
  * }}
- *   search, get and counts reject with a DirectoryError when the database cannot be reached.
+ *   search, get, counts and notes reject with a DirectoryError when the database cannot be reached.
  */
 export function createDirectory({ client, catalog, token }) {
   const read = createListingReader(catalog);
@@ -159,6 +161,25 @@ export function createDirectory({ client, catalog, token }) {
         cities: table(counts?.cities),
         priceUnits: table(counts?.priceUnits),
         languages: table(counts?.languages),
+      };
+    },
+
+    /**
+     * The agent notes of the listing with this number: what the WebMCP tools tell and the page does not show.
+     * null when the listing has none, as one that a visitor added. Only the tools call this.
+     */
+    async notes(number) {
+      if (!Number.isInteger(number) || number < 1) return null;
+      const rows = unwrap(await client.select("agent_notes", { select: NOTE_COLUMNS, number: `eq.${number}` }));
+      const row = Array.isArray(rows) ? rows[0] : null;
+      const complete =
+        isPlainObject(row) && Number.isInteger(row.response_hours) && typeof row.prepare === "string" &&
+        typeof row.offer_code === "string" && Number.isInteger(row.offer_percent);
+      if (!complete) return null;
+      return {
+        responseHours: row.response_hours,
+        prepare: row.prepare,
+        agentOffer: { code: row.offer_code, discountPercent: row.offer_percent },
       };
     },
 

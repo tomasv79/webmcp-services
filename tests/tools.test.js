@@ -5,6 +5,7 @@ import { createListingReader, INPUT_FIELDS } from "../public/js/listing-input.js
 import * as catalog from "../catalog/data.js";
 import { DirectoryError } from "../public/js/directory.js";
 import { createMemoryDirectory } from "./support/memory-directory.js";
+import { notesFor } from "../catalog/notes.js";
 
 const WED_1000 = new Date("2026-11-25T08:00:00Z"); // Wednesday 10:00 in Vilnius
 const WED_2100 = new Date("2026-11-25T19:00:00Z");
@@ -277,7 +278,7 @@ test("a failing page update does not fail the answer", async () => {
 
 test("the database not answering is returned as an error object that says so", async () => {
   const down = async () => { throw new DirectoryError("fetch failed"); };
-  const t = setup({ directory: { search: down, get: down, counts: down } });
+  const t = setup({ directory: { search: down, get: down, counts: down, notes: down } });
   for (const answer of [await t.search({}), await t.get({ id: "svc-001" }), await t.filters({})]) {
     assert.equal(answer.error.field, null);
     assert.match(answer.error.message, /database could not be reached/);
@@ -330,6 +331,58 @@ test("AC5.5 get_service returns the whole listing with computed availability and
     nextFreeDate: "2026-11-27",
   });
   assert.deepEqual(t.calls.showListing, ["svc-046"]);
+});
+
+test("get_service returns the agent notes of the listing, and the page gets the listing without them", async () => {
+  const shown = [];
+  const t = setup({ showListing: (listing) => shown.push(listing) });
+  const source = catalog.listings.find((l) => l.id === "svc-046");
+  const { service } = await t.get({ id: "svc-046" });
+  assert.deepEqual(service.agentNotes, notesFor(source));
+  assert.equal(Object.keys(service).at(-1), "agentNotes");
+  assert.equal(typeof service.agentNotes.responseHours, "number");
+  assert.match(service.agentNotes.prepare, /pupil/);
+  assert.match(service.agentNotes.agentOffer.code, /^MCP-46-/);
+
+  // What the page is handed to draw has no trace of the notes.
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0], source);
+  assert.doesNotMatch(JSON.stringify(shown[0]), /agentNotes|MCP-46-|responseHours/);
+
+  // Neither has a search result: the notes come with the full record only.
+  const { results } = await t.search({ query: "Programavimo pamokos" });
+  assert.ok(results.length > 0);
+  assert.doesNotMatch(JSON.stringify(results), /agentNotes|MCP-\d+-/);
+
+  const description = t.tools.find((tool) => tool.name === "get_service").description;
+  for (const word of ["agentNotes", "responseHours", "prepare", "agentOffer", "discountPercent", "page does not show"]) {
+    assert.ok(description.includes(word), word);
+  }
+});
+
+test("get_service answers a listing without agent notes: one a visitor added, or when the notes cannot be read", async (context) => {
+  const memory = createMemoryDirectory(catalog);
+  const visitor = setup({ directory: { ...memory, notes: async () => null } });
+  const answer = await visitor.get({ id: "svc-001" });
+  assert.equal(answer.service.id, "svc-001");
+  assert.equal(answer.service.agentNotes, null);
+
+  const warn = context.mock.method(console, "warn", () => {});
+  for (const notes of [async () => { throw new DirectoryError("no such table"); }, () => { throw new Error("broke"); }, async () => undefined]) {
+    const t = setup({ directory: { ...memory, notes } });
+    const { service, error } = await t.get({ id: "svc-001" });
+    assert.equal(error, undefined);
+    assert.equal(service.provider.name, "Vandens Meistrai");
+    assert.equal(service.agentNotes, null);
+    assert.deepEqual(t.calls.showListing, ["svc-001"]);
+  }
+  assert.equal(warn.mock.callCount(), 2);
+
+  // An id that is not one asks for nothing.
+  let asked = 0;
+  const none = setup({ directory: { ...memory, notes: async () => { asked += 1; return null; } } });
+  assert.equal((await none.get({ id: "plumbing" })).error.field, "id");
+  assert.equal(asked, 0);
 });
 
 test("AC5.5 get_service returns a copy, not the stored listing", async () => {

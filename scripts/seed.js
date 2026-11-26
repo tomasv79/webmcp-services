@@ -1,6 +1,6 @@
-// Writes the catalog to the Supabase database: the categories, the cities and the 10,000 fictional listings.
-// Run it after the migration in supabase/migrations, and again whenever the catalog changes; it replaces the
-// catalog's rows and leaves the listings that visitors added alone.
+// Writes the catalog to the Supabase database: the categories, the cities, the 10,000 fictional listings and
+// the agent notes of each. Run it after the migrations in supabase/migrations, and again whenever the catalog
+// changes; it replaces the catalog's rows and leaves the listings that visitors added alone.
 //
 //   SUPABASE_SECRET_KEY=... node scripts/seed.js
 //
@@ -12,6 +12,7 @@ import { SUPABASE_URL } from "../public/js/config.js";
 import { searchWords } from "../public/js/directory.js";
 
 const BATCH = 500;
+const NOTES_BATCH = 5000; // a note is a tenth of a listing
 
 const url = (process.env.SUPABASE_URL ?? SUPABASE_URL).replace(/\/+$/, "");
 const key = process.env.SUPABASE_SECRET_KEY;
@@ -49,6 +50,11 @@ try {
     await upsert("listings", "number", rows.slice(start, start + BATCH));
     console.log(`listings ${Math.min(start + BATCH, rows.length)} / ${rows.length}`);
   }
+  // After the listings: a note belongs to a listing that is there.
+  for (let start = 0; start < catalog.agentNotes.length; start += NOTES_BATCH) {
+    await upsert("agent_notes", "number", catalog.agentNotes.slice(start, start + NOTES_BATCH));
+  }
+  console.log(`${catalog.agentNotes.length} agent notes`);
   console.log(`Done: ${url}`);
 } catch (error) {
   console.error(`Seeding failed. ${error.message}`);

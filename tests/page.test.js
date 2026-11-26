@@ -215,6 +215,16 @@ test("AC1.2 and AC1.3 the page has the controls the script expects", () => {
   }
 });
 
+test("agent notes: the page itself never asks for them and has no words for them", () => {
+  // Only tools.js reads the notes, through directory.notes; nothing that draws the page knows they exist.
+  for (const file of ownScripts.filter((name) => !["tools.js", "directory.js"].includes(name))) {
+    assert.doesNotMatch(read(`js/${file}`), /agent_notes|agentNotes|agentOffer|\.notes\(/, file);
+  }
+  assert.doesNotMatch(html + read("styles.css"), /agent_notes|agentNotes|agentOffer|MCP-\d/);
+  assert.equal([...read("js/tools.js").matchAll(/directory\.notes\(/g)].length, 1);
+  assert.equal([...read("js/directory.js").matchAll(/"agent_notes"/g)].length, 1);
+});
+
 test("only the temporary check tool is gone: the page registers the real tools with all three page effects", () => {
   const appSource = read("js/app.js");
   assert.doesNotMatch(appSource, /ping_services/);
