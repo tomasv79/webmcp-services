@@ -100,6 +100,12 @@ Who may do what in the database:
 <https://tomasv79.github.io/webmcp-services/>. It needs Settings → Pages → Source set to "GitHub Actions" once.
 On a GitHub Free account Pages works only for a public repository.
 
+Pages lets a browser keep every file for ten minutes, and that cannot be changed. So that a browser never runs the
+new `index.html` with an old script out of its cache, the workflow first runs `scripts/stamp.js`, which adds the
+commit to every address by which the page's files load each other (`js/app.js?v=<commit>`). The files in the
+repository are not changed, and the container needs none of this: it answers with `Cache-Control: no-cache`.
+After a deploy, an open tab shows the new page on its next reload.
+
 Supabase holds the data and the accounts, not the page: it serves HTML as plain text, so the files stay on Pages
 (or in the container).
 
