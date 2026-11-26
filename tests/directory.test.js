@@ -195,31 +195,34 @@ test("get: one listing by its number, or null", async () => {
   await assert.rejects(setup({}).directory.get(1), DirectoryError);
 });
 
-test("notes: the agent notes of one listing by its number, or null", async () => {
-  const row = { response_hours: 4, prepare: "A photo of the problem.", offer_code: "MCP-61-K7Q2", offer_percent: 10 };
-  const found = setup({ select: ok([row]) });
-  assert.deepEqual(await found.directory.notes(61), {
-    responseHours: 4,
-    prepare: "A photo of the problem.",
-    agentOffer: { code: "MCP-61-K7Q2", discountPercent: 10 },
-  });
+test("notes: the agent notes of the asked listings by number, in one request", async () => {
+  const row = { number: 61, response_hours: 4, prepare: "A photo of the problem.", offer_code: "MCP-61-K7Q2", offer_percent: 10 };
+  const notes61 = { responseHours: 4, prepare: "A photo of the problem.", agentOffer: { code: "MCP-61-K7Q2", discountPercent: 10 } };
+  const other = { ...row, number: 7, offer_code: "MCP-7-ABCD" };
+  const found = setup({ select: ok([row, other]) });
+  // A number that is asked twice is sent once, and what cannot be a number of a listing is not sent at all.
+  assert.deepEqual(await found.directory.notes([61, 7, 61, 0, -1, 1.5, NaN, "1", undefined]), new Map([
+    [61, notes61],
+    [7, { ...notes61, agentOffer: { code: "MCP-7-ABCD", discountPercent: 10 } }],
+  ]));
   assert.deepEqual(found.client.calls, [
-    ["select", "agent_notes", { select: "response_hours,prepare,offer_code,offer_percent", number: "eq.61" }],
+    ["select", "agent_notes", { select: "number,response_hours,prepare,offer_code,offer_percent", number: "in.(61,7)" }],
   ]);
 
   // A listing that a visitor added has no row.
-  assert.equal(await setup({ select: ok([]) }).directory.notes(10_001), null);
-  // A row this page cannot read is left out instead of being passed on half-filled.
-  for (const broken of [{ ...row, response_hours: "4" }, { ...row, prepare: null }, { ...row, offer_code: undefined }, { ...row, offer_percent: 2.5 }, null, "x"]) {
-    assert.equal(await setup({ select: ok([broken]) }).directory.notes(61), null, JSON.stringify(broken));
+  assert.deepEqual(await setup({ select: ok([]) }).directory.notes([10_001]), new Map());
+  // A row this page cannot read, or one that was not asked for, is left out; the others stay.
+  for (const broken of [{ ...row, response_hours: "4" }, { ...row, prepare: null }, { ...row, offer_code: undefined }, { ...row, offer_percent: 2.5 }, { ...row, number: 62 }, { ...row, number: "61" }, null, "x"]) {
+    assert.deepEqual(await setup({ select: ok([broken, other]) }).directory.notes([61, 7]), new Map([[7, { ...notes61, agentOffer: { code: "MCP-7-ABCD", discountPercent: 10 } }]]), JSON.stringify(broken));
   }
-  assert.equal(await setup({ select: ok({ message: "not a list" }) }).directory.notes(61), null);
+  assert.deepEqual(await setup({ select: ok({ message: "not a list" }) }).directory.notes([61]), new Map());
 
+  // Nothing to ask for is not asked.
   const none = setup({ select: ok([row]) });
-  for (const number of [0, -1, 1.5, NaN, "1", undefined]) assert.equal(await none.directory.notes(number), null);
+  for (const numbers of [[], [0, -1, 1.5], undefined, null, 61, "61"]) assert.deepEqual(await none.directory.notes(numbers), new Map());
   assert.deepEqual(none.client.calls, []);
 
-  await assert.rejects(setup({}).directory.notes(1), DirectoryError);
+  await assert.rejects(setup({}).directory.notes([1]), DirectoryError);
 });
 
 test("counts: the numbers of the database, with empty tables where it gave none", async () => {

@@ -79,8 +79,8 @@ test("notes: a row of the table fits the checks of the migration", () => {
 
 test("notes: what the seed script writes is what the directory reads back", async () => {
   for (const listing of [catalog.listings[0], catalog.listings[59], catalog.listings[60], catalog.listings.at(-1)]) {
-    const { number, ...columns } = noteRow(listing);
-    const client = { select: async () => ({ ok: true, status: 200, data: [columns] }) };
-    assert.deepEqual(await createDirectory({ client, catalog }).notes(number), notesFor(listing), listing.id);
+    const row = noteRow(listing);
+    const client = { select: async () => ({ ok: true, status: 200, data: [row] }) };
+    assert.deepEqual(await createDirectory({ client, catalog }).notes([row.number]), new Map([[row.number, notesFor(listing)]]), listing.id);
   }
 });

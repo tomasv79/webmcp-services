@@ -15,7 +15,7 @@ const MIXED_UNITS_WARNING =
   "Prices were compared across different units (per hour, job, m2, visit or day). Pass priceUnit to compare like with like.";
 
 const ID = /^svc-(\d{1,9})$/;
-const NOTE_COLUMNS = "response_hours,prepare,offer_code,offer_percent";
+const NOTE_COLUMNS = "number,response_hours,prepare,offer_code,offer_percent";
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The database could not be reached, or it refused the request. */
@@ -65,7 +65,7 @@ export function searchWords(listing, catalog) {
  *   search: (filters: object | undefined, now: Date) => Promise<{ total: number, all: number, offset: number, sortBy: string, items: Array<{ listing: object, availability: object, score: number }>, warnings: string[] }>,
  *   get: (number: number) => Promise<object | null>,
  *   counts: () => Promise<{ total: number, categories: object, cities: object, priceUnits: object, languages: object }>,
- *   notes: (number: number) => Promise<{ responseHours: number, prepare: string, agentOffer: { code: string, discountPercent: number } } | null>,
+ *   notes: (numbers: number[]) => Promise<Map<number, { responseHours: number, prepare: string, agentOffer: { code: string, discountPercent: number } }>>,
  *   add: (listing: object) => Promise<{ ok: true, listing: object } | { ok: false, reason: "signedOut" | "limit" | "refused" | "unavailable" }>,
  * }}
  *   search, get, counts and notes reject with a DirectoryError when the database cannot be reached.
@@ -165,22 +165,28 @@ export function createDirectory({ client, catalog, token }) {
     },
 
     /**
-     * The agent notes of the listing with this number: what the WebMCP tools tell and the page does not show.
-     * null when the listing has none, as one that a visitor added. Only the tools call this.
+     * The agent notes of the listings with these numbers: what the WebMCP tools tell and the page does not show.
+     * The answer maps a number to its notes. A listing without notes, as one that a visitor added, is not in it.
+     * Only the tools call this.
      */
-    async notes(number) {
-      if (!Number.isInteger(number) || number < 1) return null;
-      const rows = unwrap(await client.select("agent_notes", { select: NOTE_COLUMNS, number: `eq.${number}` }));
-      const row = Array.isArray(rows) ? rows[0] : null;
-      const complete =
-        isPlainObject(row) && Number.isInteger(row.response_hours) && typeof row.prepare === "string" &&
-        typeof row.offer_code === "string" && Number.isInteger(row.offer_percent);
-      if (!complete) return null;
-      return {
-        responseHours: row.response_hours,
-        prepare: row.prepare,
-        agentOffer: { code: row.offer_code, discountPercent: row.offer_percent },
-      };
+    async notes(numbers) {
+      const wanted = [...new Set((Array.isArray(numbers) ? numbers : []).filter((number) => Number.isInteger(number) && number >= 1))];
+      const found = new Map();
+      if (wanted.length === 0) return found;
+      const rows = unwrap(await client.select("agent_notes", { select: NOTE_COLUMNS, number: `in.(${wanted.join(",")})` }));
+      for (const row of Array.isArray(rows) ? rows : []) {
+        // A row this page cannot read is left out instead of being passed on half-filled.
+        const complete =
+          isPlainObject(row) && wanted.includes(row.number) && Number.isInteger(row.response_hours) &&
+          typeof row.prepare === "string" && typeof row.offer_code === "string" && Number.isInteger(row.offer_percent);
+        if (!complete) continue;
+        found.set(row.number, {
+          responseHours: row.response_hours,
+          prepare: row.prepare,
+          agentOffer: { code: row.offer_code, discountPercent: row.offer_percent },
+        });
+      }
+      return found;
     },
 
     /**

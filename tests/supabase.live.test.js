@@ -98,10 +98,11 @@ test("live: a listing and the counts come back as the catalog has them", { skip 
     assert.deepEqual(await directory.get(number), base.listings[number - 1], `svc-${number}`);
   }
   assert.equal(await directory.get(999_999_999), null);
-  for (const number of [1, 60, 61, 5000, 10000]) {
-    assert.deepEqual(await directory.notes(number), notesFor(base.listings[number - 1]), `notes of svc-${number}`);
-  }
-  assert.equal(await directory.notes(999_999_999), null);
+  const numbers = [1, 60, 61, 5000, 10000];
+  assert.deepEqual(
+    await directory.notes([...numbers, 999_999_999]),
+    new Map(numbers.map((number) => [number, notesFor(base.listings[number - 1])])),
+  );
 
   const counts = await directory.counts();
   const expected = await createMemoryDirectory(base).counts();

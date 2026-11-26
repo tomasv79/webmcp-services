@@ -216,7 +216,7 @@ dialog first and the form right after signing in.
 
 | Tool | Input | Returns |
 |---|---|---|
-| `search_services` | `query`, `category`, `country`, `city`, `priceMax`, `priceUnit`, `minRating`, `language`, `travelsToClient`, `openNow`, `availableWithinDays`, `sortBy`, `limit`, `offset` (all optional) | `total`, `returned`, `offset`, `appliedFilters`, `warnings`, `results[]` |
+| `search_services` | `query`, `category`, `country`, `city`, `priceMax`, `priceUnit`, `minRating`, `language`, `travelsToClient`, `openNow`, `availableWithinDays`, `sortBy`, `limit`, `offset` (all optional) | `total`, `returned`, `offset`, `appliedFilters`, `warnings`, `results[]`, each with its `agentNotes` |
 | `get_service` | `id` | `service`: the full listing with weekly hours, computed availability and `agentNotes` |
 | `list_service_filters` | none | valid categories, countries, cities, price units, languages, sort options, with counts |
 | `draft_service` | the fields of the new-service form | `status`, `message`, `draft`, `warnings` |
@@ -238,7 +238,8 @@ Things worth knowing when calling them:
 
 ### Agent notes
 
-`get_service` returns one thing that the page never shows: `service.agentNotes`.
+The tools return one thing that the page never shows: `agentNotes`, in every result of `search_services` and in
+the `service` of `get_service`.
 
 ```json
 {
@@ -253,9 +254,12 @@ Things worth knowing when calling them:
   discount of 5, 10 or 15 percent for whoever names the code. All of it is as fictional as the rest of the catalog.
 - An agent that quotes an offer code got it from the tool: the code is on no page. It is `MCP-`, the number of the
   listing and four letters or digits, so it cannot be worked out from the id.
-- The notes are in their own table, and only `get_service` asks for it (`directory.notes` in `js/directory.js`).
-  `js/app.js` does not: the list, the cards and the highlighted listing are drawn from the listing alone, and
-  `search_services` does not return the notes either. `tests/page.test.js` keeps it that way.
+- The notes are in their own table, and only the two tools ask for it (`directory.notes` in `js/directory.js`):
+  `get_service` for its listing, and `search_services` for the listings it returns, in one more request after the
+  search. `js/app.js` does not: the list, the cards and the highlighted listing are drawn from the listings alone,
+  and a tool hands the page the filters or the listing, never the notes. `tests/page.test.js` keeps it that way.
+- The notes are in the search results because many agents make one call per question. A reader that only searches
+  still gets them.
 - **They are not shown, and they are not secret.** The tools run in the visitor's browser with the same publishable
   key as the page, so anyone who opens the developer tools, or asks the Supabase API for `agent_notes`, can read
   every row. A page of static files cannot hide from the browser what its own tools fetch. Nothing that has to stay
@@ -319,7 +323,7 @@ public/
 catalog/                      what the seed script writes to the database; the page does not load it
   data.js                     60 hand-written listings
   generate.js                 seeded generator for the other 9,940 listings
-  notes.js                    notesFor(listing): the agent notes of a listing, which only get_service returns
+  notes.js                    notesFor(listing): the agent notes of a listing, which only the tools return
   catalog.js                  data.js + generated listings = the 10,000, and the agent notes of each
 scripts/seed.js               writes the categories, the cities, the catalog and the agent notes to Supabase with
                               the secret key
@@ -331,7 +335,7 @@ tests/                        one file per module, page.test.js for index.html r
 ```
 
 The page and the tools call the same `directory.search`, so a tool answer and the visible list agree.
-The one thing they do not share is `directory.notes`, which only `get_service` calls.
+The one thing they do not share is `directory.notes`, which only `search_services` and `get_service` call.
 The page keeps no copy of the listings: it asks for ten at a time, and again once a minute, because "open now"
 depends on the clock. An answer that arrives after a newer search has started is dropped, and typing in the search
 box asks the database only after a short pause.

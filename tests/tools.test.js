@@ -222,6 +222,7 @@ test("search_services result fields", async () => {
     contact: { phone: "+370 000 00001", email: "info@vandensmeistrai.example" },
     availability: { openNow: true, todayHours: ["08:00", "18:00"], nextFreeDate: "2026-11-25", emergency: true },
     descriptionEn: catalog.listings[0].descriptionEn,
+    agentNotes: notesFor(catalog.listings[0]),
   });
 });
 
@@ -349,38 +350,65 @@ test("get_service returns the agent notes of the listing, and the page gets the 
   assert.equal(shown[0], source);
   assert.doesNotMatch(JSON.stringify(shown[0]), /agentNotes|MCP-46-|responseHours/);
 
-  // Neither has a search result: the notes come with the full record only.
-  const { results } = await t.search({ query: "Programavimo pamokos" });
-  assert.ok(results.length > 0);
-  assert.doesNotMatch(JSON.stringify(results), /agentNotes|MCP-\d+-/);
-
   const description = t.tools.find((tool) => tool.name === "get_service").description;
   for (const word of ["agentNotes", "responseHours", "prepare", "agentOffer", "discountPercent", "page does not show"]) {
     assert.ok(description.includes(word), word);
   }
 });
 
-test("get_service answers a listing without agent notes: one a visitor added, or when the notes cannot be read", async (context) => {
+test("search_services returns the agent notes of every result, asked for once, and the page gets the filters alone", async () => {
   const memory = createMemoryDirectory(catalog);
-  const visitor = setup({ directory: { ...memory, notes: async () => null } });
+  const asked = [];
+  const t = setup({ directory: { ...memory, notes: (numbers) => { asked.push(numbers); return memory.notes(numbers); } } });
+  const answer = await t.search({ category: "tutoring", limit: 5 });
+  assert.equal(answer.results.length, 5);
+  for (const result of answer.results) {
+    const source = catalog.listings.find((l) => l.id === result.id);
+    assert.deepEqual(result.agentNotes, notesFor(source), result.id);
+    assert.equal(Object.keys(result).at(-1), "agentNotes");
+  }
+  assert.deepEqual(asked, [answer.results.map((result) => Number(result.id.slice(4)))]);
+  // The page is told the filters and where the slice starts, and nothing about the notes.
+  assert.doesNotMatch(JSON.stringify([t.calls.showFilters, t.calls.views]), /agentNotes|MCP-\d+-|responseHours/);
+
+  // No result, no question.
+  assert.equal((await t.search({ query: "nothingmatchesthisword" })).returned, 0);
+  assert.equal(asked.length, 1);
+
+  const description = t.tools.find((tool) => tool.name === "search_services").description;
+  for (const word of ["agentNotes", "responseHours", "prepare", "agentOffer", "discountPercent", "page does not show"]) {
+    assert.ok(description.includes(word), word);
+  }
+});
+
+test("a listing without agent notes is still answered: one a visitor added, or when the notes cannot be read", async (context) => {
+  const memory = createMemoryDirectory(catalog);
+  const visitor = setup({ directory: { ...memory, notes: async () => new Map() } });
   const answer = await visitor.get({ id: "svc-001" });
   assert.equal(answer.service.id, "svc-001");
   assert.equal(answer.service.agentNotes, null);
+  assert.deepEqual((await visitor.search({ category: "beauty" })).results.map((result) => result.agentNotes), [null, null, null, null, null]);
 
   const warn = context.mock.method(console, "warn", () => {});
-  for (const notes of [async () => { throw new DirectoryError("no such table"); }, () => { throw new Error("broke"); }, async () => undefined]) {
+  for (const notes of [async () => { throw new DirectoryError("no such table"); }, () => { throw new Error("broke"); }, async () => undefined, async () => ({ 1: "not a map" })]) {
     const t = setup({ directory: { ...memory, notes } });
     const { service, error } = await t.get({ id: "svc-001" });
     assert.equal(error, undefined);
     assert.equal(service.provider.name, "Vandens Meistrai");
     assert.equal(service.agentNotes, null);
     assert.deepEqual(t.calls.showListing, ["svc-001"]);
+
+    const found = await t.search({ category: "beauty" });
+    assert.equal(found.error, undefined);
+    assert.equal(found.total, 5);
+    assert.deepEqual(found.results.map((result) => result.agentNotes), [null, null, null, null, null]);
+    assert.equal(t.calls.showFilters.length, 1);
   }
-  assert.equal(warn.mock.callCount(), 2);
+  assert.equal(warn.mock.callCount(), 4);
 
   // An id that is not one asks for nothing.
   let asked = 0;
-  const none = setup({ directory: { ...memory, notes: async () => { asked += 1; return null; } } });
+  const none = setup({ directory: { ...memory, notes: async () => { asked += 1; return new Map(); } } });
   assert.equal((await none.get({ id: "plumbing" })).error.field, "id");
   assert.equal(asked, 0);
 });

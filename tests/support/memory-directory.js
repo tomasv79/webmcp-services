@@ -23,9 +23,13 @@ export function createMemoryDirectory(catalog) {
       return catalog.listings.find((listing) => Number(listing.id.slice(4)) === number) ?? null;
     },
     /** A listing of the catalog has notes; one that a visitor added has none. */
-    async notes(number) {
-      const listing = catalog.listings.find((each) => Number(each.id.slice(4)) === number);
-      return listing && listing.added !== true ? notesFor(listing) : null;
+    async notes(numbers) {
+      const found = new Map();
+      for (const listing of catalog.listings) {
+        const number = Number(listing.id.slice(4));
+        if (numbers.includes(number) && listing.added !== true) found.set(number, notesFor(listing));
+      }
+      return found;
     },
     async counts() {
       const { listings } = catalog;
