@@ -69,6 +69,9 @@ Setting the project up, once:
    `https://tomasv79.github.io/webmcp-services/` and add `http://localhost:5175/**` to the redirect URLs; without
    that the link in the email opens `localhost:3000`.
 
+5. **The demo account.** Create it once in the page: **Neturiu paskyros** (**I have no account**), with the email
+   `jonas@webmcp-services.example` and the name and password from the table under [Accounts](#accounts).
+
 Who may do what in the database:
 
 | | Read listings, search | Add a listing | Change or delete |
@@ -157,6 +160,15 @@ The header has a **Prisijungti** (**Sign in**) button that opens a dialog. The s
 - The page also handles a project that confirms emails: the new account then gets an email with a link, the link
   comes back to the page, and the page signs the person in and takes the session out of the address bar. Supabase's
   own mail service sends only a few emails per hour; for more, set up SMTP in the project.
+- There is one demo account, for trying the page without signing up:
+
+  | Sign in as | Password | Name |
+  |---|---|---|
+  | `jonas` | `jonas123` | Jonas Jonaitis |
+
+  It is an ordinary account, `jonas@webmcp-services.example`. A sign-in name without `@` gets that domain, so
+  `jonas` is enough. The password is public, so anyone can use the account, use up its 50 listings or change its
+  password; to reset it, delete the user in the dashboard (Authentication → Users) and create it again.
 - Signing in changes the header: it shows the name (or the email) and an **Atsijungti** (**Sign out**) button. It is
   also needed to add a service (see below). The directory and the reading tools work the same signed in or out.
 - The session (two tokens and the name, never the password) is kept in `localStorage` under

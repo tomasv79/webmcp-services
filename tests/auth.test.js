@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAuth, browserStorage, STORAGE_KEY } from "../public/js/auth.js";
+import { createAuth, browserStorage, STORAGE_KEY, DEMO_DOMAIN } from "../public/js/auth.js";
 
 function fakeStorage(initial = {}) {
   const items = new Map(Object.entries(initial));
@@ -64,6 +64,21 @@ test("login: a right email and password sign the person in, and the session is s
   assert.deepEqual(JSON.parse(stored), { accessToken: "access-1", refreshToken: "refresh-1", expiresAt: NOW_SECONDS + 3600, user: ONA });
   assert.doesNotMatch(stored, /secret-123/);
   assert.deepEqual([...storage.items.keys()], [STORAGE_KEY]);
+});
+
+test("login: a name without \"@\" signs in the demo account of that name", async () => {
+  assert.equal(DEMO_DOMAIN, "webmcp-services.example");
+  const { auth, client } = setup({ answers: { signIn: ok(supabaseSession()) } });
+  await auth.signIn(" Jonas ", "jonas123");
+  await auth.signIn("jonas@webmcp-services.example", "jonas123");
+  await auth.signIn("jonas@elsewhere.example", "jonas123");
+  assert.deepEqual(client.calls.map(([, account]) => account.email), ["jonas@webmcp-services.example", "jonas@webmcp-services.example", "jonas@elsewhere.example"]);
+});
+
+test("sign-up: a name without \"@\" is not completed, so no account can be created in the demo domain by accident", async () => {
+  const { auth, client } = setup({ answers: { signUp: refused(400, { error_code: "validation_failed" }) } });
+  assert.deepEqual(await auth.signUp({ email: "petras", password: "secret-123" }), { ok: false, reason: "email" });
+  assert.equal(client.calls[0][1].email, "petras");
 });
 
 test("login: an account without a name is shown by its email", async () => {

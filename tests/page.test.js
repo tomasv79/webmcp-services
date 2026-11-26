@@ -133,7 +133,9 @@ test("login: the sign-in form is sent by the script alone and sits in a dialog",
   assert.ok(dialogStart !== -1 && dialogStart < form.index && form.index < dialogEnd, "the form is inside #login-dialog");
 
   const inputs = Object.fromEntries(tags("input").map((input) => [input.attrs.id, input.attrs]));
-  assert.equal(inputs["login-email"].type, "email");
+  // Not type="email": the demo account signs in with the plain name "jonas", which the browser would refuse.
+  assert.equal(inputs["login-email"].type, "text");
+  assert.equal(inputs["login-email"].inputmode, "email");
   assert.equal(inputs["login-email"].autocomplete, "username");
   assert.equal(inputs["login-password"].type, "password");
   assert.equal(inputs["login-password"].autocomplete, "current-password");

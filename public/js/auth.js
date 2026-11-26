@@ -4,6 +4,10 @@
 
 export const STORAGE_KEY = "webmcp-services.session";
 
+// The demo account is jonas@webmcp-services.example, and signs in as "jonas": a sign-in name without "@" gets this
+// domain. ".example" is reserved, so no such address can belong to anybody.
+export const DEMO_DOMAIN = "webmcp-services.example";
+
 // A token this close to its end is replaced before it is used.
 const REFRESH_MARGIN_SECONDS = 60;
 
@@ -132,10 +136,14 @@ export function createAuth({ client, storage, now = Date.now }) {
       return session ? { id: session.user.id, email: text(session.user.email), name: text(session.user.name) || text(session.user.email) } : null;
     },
 
-    /** The email ignores case and surrounding spaces; the password is sent as typed. */
+    /**
+     * The email ignores case and surrounding spaces; the password is sent as typed.
+     * A name without "@" is the demo account of that name: "jonas" is jonas@webmcp-services.example.
+     */
     async signIn(email, password) {
       if (typeof email !== "string" || typeof password !== "string" || !email.trim() || !password) return { ok: false, reason: "credentials" };
-      const answer = await client.auth.signIn({ email: email.trim().toLowerCase(), password });
+      const typed = email.trim().toLowerCase();
+      const answer = await client.auth.signIn({ email: typed.includes("@") ? typed : `${typed}@${DEMO_DOMAIN}`, password });
       const session = answer.ok ? sessionOf(answer.data, seconds()) : null;
       if (session) {
         save(session);
