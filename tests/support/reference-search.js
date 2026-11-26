@@ -1,15 +1,16 @@
-// One search function for the page and for the WebMCP tools, so the list on screen and a tool answer cannot disagree.
+// The search of the directory, written out in JavaScript: what search_listings in supabase/migrations has to do.
+// The page does not load this. The tests use it in two ways: tests/support/memory-directory.js answers like the
+// database without one, and tests/supabase.live.test.js compares a real database with it, search by search.
 // Pure: no DOM, no clock of its own. The caller passes the current time.
 
-import { normalize, wordIndex, queryTokens, hasWordStartingWith } from "./text.js";
-import { computeAvailability, vilniusNow } from "./availability.js";
-
-export const SORT_OPTIONS = ["relevance", "rating", "price_asc", "price_desc", "soonest"];
+import { normalize, wordIndex, queryTokens, hasWordStartingWith } from "../../public/js/text.js";
+import { computeAvailability, vilniusNow } from "../../public/js/availability.js";
+import { SORT_OPTIONS } from "../../public/js/directory.js";
 
 const MIXED_UNITS_WARNING =
   "Prices were compared across different units (per hour, job, m2, visit or day). Pass priceUnit to compare like with like.";
 
-// Search words per listing, built once per catalog. The page adds a new listing to the end of catalog.listings,
+// Search words per listing, built once per catalog. A listing may be added to the end of catalog.listings,
 // so a search first indexes whatever has arrived since the last one.
 const indexes = new WeakMap();
 

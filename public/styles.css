@@ -215,6 +215,24 @@ main,
   font-weight: 600;
 }
 
+/* The name is asked for only when an account is created. */
+.field[hidden] {
+  display: none;
+}
+
+/* Switches the dialog between signing in and creating an account. */
+.login-mode {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.9rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .service {
   width: min(680px, calc(100vw - 32px));
 }

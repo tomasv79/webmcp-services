@@ -1,6 +1,6 @@
 // The WebMCP tools: three that read the directory and one that fills in the new-service form.
-// Pure logic: the page effects (showFilters, showListing, showDraft) and the clock are passed in,
-// so everything here runs in Node tests without a browser.
+// Pure logic: the directory (the listings in the database), the page effects (showFilters, showListing, showDraft)
+// and the clock are passed in, so everything here runs in Node tests without a browser or a network.
 //
 // A tool never throws: the WebMCP polyfill would turn a thrown error into a bare "OperationError" with no message.
 // Wrong input is answered with { error: { field, message, validValues? } } so the agent can correct itself.
@@ -8,7 +8,7 @@
 import { normalize } from "./text.js";
 import { computeAvailability, TIME_ZONE } from "./availability.js";
 import { createListingReader, inputOfListing, INPUT_FIELDS, LIMITS, POSTAL, PROVIDER_TYPES } from "./listing-input.js";
-import { searchServices, SORT_OPTIONS } from "./search.js";
+import { DirectoryError, SORT_OPTIONS } from "./directory.js";
 
 export const LIMIT_DEFAULT = 10;
 export const LIMIT_MAX = 20;
@@ -35,7 +35,7 @@ class InputError extends Error {
 /** Valid values of every enumerated filter, with a lookup that ignores case and diacritics. */
 function buildVocabulary(catalog) {
   const lookup = (pairs) => new Map(pairs.map(([key, value]) => [normalize(key).trim(), value]));
-  const cities = [...new Set(catalog.listings.map((listing) => listing.location.city))];
+  const cities = catalog.cities.map((city) => city.name);
   const aliases = catalog.cityAliases ?? {};
   return {
     category: {
@@ -269,36 +269,28 @@ function fullRecord(listing, category, now) {
   };
 }
 
-function countBy(items, key) {
-  const counts = new Map();
-  for (const item of items) for (const k of [key(item)].flat()) counts.set(k, (counts.get(k) ?? 0) + 1);
-  return counts;
-}
-
-function filterOptions(catalog) {
-  const { listings } = catalog;
-  const perCategory = countBy(listings, (l) => l.category);
-  const perUnit = countBy(listings, (l) => l.price.unit);
-  const perLanguage = countBy(listings, (l) => l.languages);
+/** The valid filter values from the vocabulary, each with the number of listings the database has for it. */
+function filterOptions(catalog, counts) {
+  const count = (table, key) => (Number.isInteger(table[key]) && table[key] > 0 ? table[key] : 0);
   const aliases = catalog.cityAliases ?? {};
   return {
-    totalListings: listings.length,
-    categories: catalog.categories.map((c) => ({ id: c.id, nameLt: c.nameLt, nameEn: c.nameEn, count: perCategory.get(c.id) ?? 0 })),
+    totalListings: counts.total,
+    categories: catalog.categories.map((c) => ({ id: c.id, nameLt: c.nameLt, nameEn: c.nameEn, count: count(counts.categories, c.id) })),
     countries: catalog.countries.map((country) => {
-      const own = listings.filter((l) => l.location.country === country.code);
-      const perCity = countBy(own, (l) => l.location.city);
+      const cities = catalog.cities
+        .filter((city) => city.country === country.code)
+        .map(({ name }) => ({ name, count: count(counts.cities, name), alsoAccepted: [...(aliases[name] ?? [])] }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "lt"));
       return {
         code: country.code,
         nameLt: country.nameLt,
         nameEn: country.nameEn,
-        count: own.length,
-        cities: [...perCity]
-          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "lt"))
-          .map(([name, count]) => ({ name, count, alsoAccepted: [...(aliases[name] ?? [])] })),
+        count: cities.reduce((sum, city) => sum + city.count, 0),
+        cities,
       };
     }),
-    priceUnits: catalog.PRICE_UNITS.map((unit) => ({ unit, count: perUnit.get(unit) ?? 0 })),
-    languages: catalog.LANGUAGES.map((code) => ({ code, count: perLanguage.get(code) ?? 0 })),
+    priceUnits: catalog.PRICE_UNITS.map((unit) => ({ unit, count: count(counts.priceUnits, unit) })),
+    languages: catalog.LANGUAGES.map((code) => ({ code, count: count(counts.languages, code) })),
     sortOptions: [...SORT_OPTIONS],
     limit: { default: LIMIT_DEFAULT, max: LIMIT_MAX },
   };
@@ -313,12 +305,16 @@ function quietly(effect, ...args) {
   }
 }
 
-/** Wrap a tool body so that nothing it does can throw out of execute(). */
-const safely = (body) => (input) => {
+/** Wrap a tool body so that nothing it does can throw out of execute(), or reject. */
+const safely = (body) => async (input) => {
   try {
-    return body(input);
+    return await body(input);
   } catch (error) {
     if (error instanceof InputError) return failure(error.field, error.message, error.validValues);
+    if (error instanceof DirectoryError) {
+      console.warn("The directory database did not answer:", error);
+      return failure(null, "The directory database could not be reached, so there is no answer. Try again in a moment.");
+    }
     console.warn("Tool failed:", error);
     return failure(null, "The tool failed unexpectedly. Try again.");
   }
@@ -332,7 +328,7 @@ Prices are in EUR and are the advertised starting price. Call-out fees are retur
 
 openNow means the provider is inside working hours right now (Europe/Vilnius time) and can be phoned; it says nothing about free capacity. availableWithinDays is about when work can start: 0 means today.
 
-Returns { notice, currency, timeZone, total, returned, offset, appliedFilters, warnings, results }. Each result has id, title, titleEn, category, provider, location (country, city, address), price (from, to, unit, negotiable, calloutFee), rating, contact (phone, email), availability (openNow, todayHours, nextFreeDate, emergency) and descriptionEn. "total" counts all matches; page with limit and offset. Use get_service with an id for the full record. A listing that a visitor added with the form on the page has no reviews yet: its rating is { average: 0, count: 0 }, minRating leaves it out, and its titleEn and descriptionEn repeat the text as it was typed. Invalid input returns { error: { field, message, validValues } } instead of results. The list shown on the page is filtered the same way and opens at the page that holds the returned results.`;
+Returns { notice, currency, timeZone, total, returned, offset, appliedFilters, warnings, results }. Each result has id, title, titleEn, category, provider, location (country, city, address), price (from, to, unit, negotiable, calloutFee), rating, contact (phone, email), availability (openNow, todayHours, nextFreeDate, emergency) and descriptionEn. "total" counts all matches; page with limit and offset. Use get_service with an id for the full record. The directory also has listings that visitors added with the form on the page. Such a listing has no reviews yet: its rating is { average: 0, count: 0 }, minRating leaves it out, and its titleEn and descriptionEn repeat the text as it was typed. Invalid input returns { error: { field, message, validValues } } instead of results. The list shown on the page is filtered the same way and opens at the page that holds the returned results.`;
 
 const GET_DESCRIPTION = `Get the full record of one service listing by id (for example "svc-001"; ids come from search_services). All data is fictional demo data.
 
@@ -340,7 +336,7 @@ Returns { notice, currency, timeZone, service }. "service" has the Lithuanian an
 
 const DRAFT_DESCRIPTION = `Fill in the "add a service" form on the page with a new listing, for the user to check and submit. This tool does not add the listing: it opens the form with the given values, and the listing is added only when the user presses the submit button of the form. Use it when the user wants to advertise a service of their own in the directory. Pass only facts the user gave you and ask for the ones that are missing; never invent a phone, an email or an address.
 
-The directory holds fictional demo data. A listing added with the form is kept only in the user's browser and is sent nowhere.
+The directory holds fictional demo data. A listing the user adds with the form is saved in the directory's database and is public: every visitor of the page and every agent that searches the directory can see it. Tell the user so before they submit, and pass nothing they do not want published.
 
 Required: title, category, description, providerName, providerType, yearsExperience, phone, email, country, city, address, postalCode, priceFrom, priceUnit, languages and hours. radiusKm is required when travelsToClient is true, and leadTimeDays unless emergency is true. The city must be one of the directory's cities in the given country: call list_service_filters for the valid categories, countries, cities, price units and languages. Title and description are written once, in the language the user wants; the form does not translate them. Prices are in EUR. "hours" has one entry per working day (mon, tue, wed, thu, fri, sat, sun) with open and close as "HH:MM" in Europe/Vilnius time; a day that is left out is a day off.
 
@@ -350,23 +346,24 @@ const FILTERS_DESCRIPTION = `List the valid filter values for search_services, w
 
 /**
  * @param {object} deps
- * @param {object} deps.catalog       The data module: listings, categories, countries, cityAliases, PRICE_UNITS, LANGUAGES, WEEKDAYS.
+ * @param {object} deps.catalog       The vocabulary: categories, countries, cities, cityAliases, PRICE_UNITS, LANGUAGES, WEEKDAYS.
+ * @param {object} deps.directory     The listings in the database, see createDirectory: search, get, counts.
  * @param {() => Date} deps.now       Read at every call, so "open now" is never stale.
- * @param {(filters: object, view: { offset: number }) => void} [deps.showFilters]
- *        Show these filters and their result in the page list; view.offset is where the agent's slice starts.
- * @param {(id: string) => void} [deps.showListing]       Show a listing highlighted above the list.
+ * @param {(filters: object, view: { offset: number, total: number }) => void} [deps.showFilters]
+ *        Show these filters and their result in the page list; view.offset is where the agent's slice starts
+ *        and view.total how many listings matched.
+ * @param {(listing: object) => void} [deps.showListing]  Show a listing highlighted above the list.
  * @param {(input: object) => { signedIn: boolean }} [deps.showDraft]
  *        Put this form input into the new-service form and open it, behind the sign-in when nobody is signed in.
  *        Unlike the two above, this effect is the whole point of its tool: when it fails, the tool says so.
- * @returns {Array<{ name: string, description: string, inputSchema: object, annotations: object, execute: (input: unknown) => object }>}
+ * @returns {Array<{ name: string, description: string, inputSchema: object, annotations: object, execute: (input: unknown) => Promise<object> }>}
  */
-export function createTools({ catalog, now, showFilters, showListing, showDraft }) {
+export function createTools({ catalog, directory, now, showFilters, showListing, showDraft }) {
   const vocabulary = buildVocabulary(catalog);
   const categoryById = new Map(catalog.categories.map((c) => [c.id, c]));
   const readListing = createListingReader(catalog);
-  const countryOfCity = new Map(catalog.listings.map((listing) => [listing.location.city, listing.location.country]));
   const citiesByCountry = new Map(catalog.countries.map((country) => [country.code, []]));
-  for (const [city, country] of countryOfCity) citiesByCountry.get(country)?.push(city);
+  for (const city of catalog.cities) citiesByCountry.get(city.country)?.push(city.name);
   const draftValidValues = (field, draft) => {
     if (field === "city") return citiesByCountry.get(draft.country) ?? vocabulary.city.values;
     if (field === "languages") return vocabulary.language.values;
@@ -385,18 +382,6 @@ export function createTools({ catalog, now, showFilters, showListing, showDraft 
         return validValues ? { ...error, validValues } : error;
       })
       .sort((a, b) => formOrder(a) - formOrder(b));
-  };
-  // Ids are "svc-" plus a number; hand-written ones are padded to 3 digits and generated ones to 5.
-  // Look listings up by the number, so "svc-1", "svc-001" and "svc-00001" all find the same listing.
-  // The page adds new listings to the end of catalog.listings, so the lookup takes in the new ones before it answers.
-  const listingByNumber = new Map();
-  let indexed = 0;
-  const findListing = (number) => {
-    for (; indexed < catalog.listings.length; indexed += 1) {
-      const listing = catalog.listings[indexed];
-      listingByNumber.set(Number(listing.id.slice(4)), listing);
-    }
-    return listingByNumber.get(number);
   };
   const annotations = { readOnlyHint: true };
 
@@ -424,10 +409,10 @@ export function createTools({ catalog, now, showFilters, showListing, showDraft 
         },
       },
       annotations,
-      execute: safely((input) => {
+      execute: safely(async (input) => {
         const { filters, limit, offset } = readSearchInput(input, vocabulary);
-        const result = searchServices(catalog, { ...filters, limit, offset }, now());
-        quietly(showFilters, { ...filters }, { offset: result.offset });
+        const result = await directory.search({ ...filters, limit, offset }, now());
+        quietly(showFilters, { ...filters }, { offset: result.offset, total: result.total });
         return answer({
           total: result.total,
           returned: result.items.length,
@@ -447,18 +432,20 @@ export function createTools({ catalog, now, showFilters, showListing, showDraft 
         required: ["id"],
       },
       annotations,
-      execute: safely((input) => {
+      execute: safely(async (input) => {
         const args = isPlainObject(input) ? input : {};
         if (typeof args.id !== "string" || !args.id.trim()) {
           throw new InputError("id", 'id is required and must be a string such as "svc-001".');
         }
+        // Ids are "svc-" plus a number; hand-written ones are padded to 3 digits and generated ones to 5.
+        // Listings are looked up by the number, so "svc-1", "svc-001" and "svc-00001" all find the same listing.
         const idNumber = /^svc-(\d{1,9})$/i.exec(args.id.trim())?.[1];
-        const listing = idNumber === undefined ? undefined : findListing(Number(idNumber));
+        const listing = idNumber === undefined ? null : await directory.get(Number(idNumber));
         if (!listing) {
           throw new InputError("id", `No listing has the id "${args.id.trim().slice(0, 40)}". Use search_services to find ids.`);
         }
         const service = fullRecord(listing, categoryById.get(listing.category), now());
-        quietly(showListing, listing.id);
+        quietly(showListing, listing);
         return answer({ service });
       }),
     },
@@ -467,7 +454,7 @@ export function createTools({ catalog, now, showFilters, showListing, showDraft 
       description: FILTERS_DESCRIPTION,
       inputSchema: { type: "object", properties: {} },
       annotations,
-      execute: safely(() => answer(filterOptions(catalog))),
+      execute: safely(async () => answer(filterOptions(catalog, await directory.counts()))),
     },
     {
       name: "draft_service",

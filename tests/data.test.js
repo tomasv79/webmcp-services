@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { categories, countries, listings, PRICE_UNITS, LANGUAGES, WEEKDAYS } from "../public/js/data.js";
+import { categories, countries, listings, PRICE_UNITS, LANGUAGES, WEEKDAYS } from "../catalog/data.js";
 
 const isString = (value) => typeof value === "string" && value.trim().length > 0;
 const isBool = (value) => typeof value === "boolean";

@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { searchServices } from "../public/js/search.js";
+import { searchServices } from "./support/reference-search.js";
 import { normalize, queryTokens } from "../public/js/text.js";
-import * as data from "../public/js/data.js";
+import * as data from "../catalog/data.js";
 
 const weekdays = (open, close) => ({
   mon: [open, close], tue: [open, close], wed: [open, close], thu: [open, close], fri: [open, close], sat: null, sun: null,

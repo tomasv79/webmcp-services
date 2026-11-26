@@ -1,4 +1,5 @@
 // The "add a service" form: the values a person typed in, a listing in the catalog's shape (or a list of errors) out.
+// The same checks read a visitor's listing again when it comes back from the database (js/directory.js).
 // Pure logic: no DOM and no storage, so everything runs in Node tests without a browser.
 // The messages are for the person filling in the form, in the language the page is shown in: Lithuanian or English.
 
@@ -183,19 +184,19 @@ export function inputOfListing(listing) {
 }
 
 /**
- * @param {{ categories: object[], countries: object[], listings: object[], PRICE_UNITS: string[], LANGUAGES: string[], WEEKDAYS: string[] }} catalog
- *   A service can be added only in a city the catalog already has, so the city filters and the tools keep their values.
+ * @param {{ categories: object[], countries: object[], cities: Array<{ name: string, country: string }>, PRICE_UNITS: string[], LANGUAGES: string[], WEEKDAYS: string[] }} catalog
+ *   The vocabulary. A service can be added only in one of its cities, so the city filters and the tools keep their values.
  * @returns {(input: unknown, language?: "lt" | "en") =>
  *   { ok: true, listing: object, input: object } | { ok: false, errors: Array<{ field: string, message: string }> }}
  *   `language` is the language of the error messages: Lithuanian unless told otherwise.
- *   `listing` has everything a catalog listing has except the id. `input` is the given input reduced to the known
- *   fields; reading it again gives the same listing, so it is what gets stored.
+ *   `listing` has everything a catalog listing has except the id: it is what gets stored, and the database gives
+ *   it its id. `input` is the given input reduced to the known fields; reading it again gives the same listing.
  *   Errors come in the order of the form. A day of the working hours is reported as "hours.mon".
  */
 export function createListingReader(catalog) {
   const categoryIds = new Set(catalog.categories.map((category) => category.id));
   const countryCodes = new Set(catalog.countries.map((country) => country.code));
-  const countryOfCity = new Map(catalog.listings.map((listing) => [listing.location.city, listing.location.country]));
+  const countryOfCity = new Map(catalog.cities.map((city) => [city.name, city.country]));
 
   return function readListing(raw, language = "lt") {
     const input = isPlainObject(raw) ? raw : {};

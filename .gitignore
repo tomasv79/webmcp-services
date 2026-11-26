@@ -1,3 +1,5 @@
 node_modules/
 .DS_Store
 .idea/
+# Written by the Supabase CLI: which project and versions it last talked to.
+supabase/.temp/

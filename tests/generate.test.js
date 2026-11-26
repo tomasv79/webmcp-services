@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { generateListings, CITIES } from "../public/js/generate.js";
-import * as base from "../public/js/data.js";
-import * as catalog from "../public/js/catalog.js";
+import { generateListings, CITIES } from "../catalog/generate.js";
+import * as base from "../catalog/data.js";
+import * as catalog from "../catalog/catalog.js";
 
 const generated = catalog.listings.slice(base.listings.length);
 
@@ -32,8 +32,14 @@ test("ACA1.1 the catalog module offers everything the tools and the search need"
   assert.equal(catalog.countries, base.countries);
   assert.equal(catalog.PRICE_UNITS, base.PRICE_UNITS);
   assert.equal(catalog.LANGUAGES, base.LANGUAGES);
-  for (const [city, aliases] of Object.entries(base.cityAliases)) assert.deepEqual(catalog.cityAliases[city], aliases);
+  assert.equal(catalog.cityAliases, base.cityAliases);
   assert.ok(catalog.cityAliases["Ventspils"].includes("Ventspilis"));
+  // The generator has its own table of cities, with weights; the names and countries are the vocabulary's.
+  assert.deepEqual(CITIES.map((c) => ({ name: c.name, country: c.country })), catalog.cities);
+  // Every listing is in a city of the vocabulary, in the right country: the database refuses any other.
+  const countryOf = new Map(catalog.cities.map((c) => [c.name, c.country]));
+  for (const listing of catalog.listings) assert.equal(countryOf.get(listing.location.city), listing.location.country, listing.id);
+  for (const city of Object.keys(catalog.cityAliases)) assert.ok(countryOf.has(city), `${city} has other spellings but is not a city`);
 });
 
 test("ACA1.2 generation is deterministic and depends on the seed", () => {

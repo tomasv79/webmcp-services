@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createListingReader, inputOfListing, INPUT_FIELDS, LIMITS, WEEKDAY_LABEL } from "../public/js/listing-input.js";
-import { searchServices } from "../public/js/search.js";
+import { searchServices } from "./support/reference-search.js";
 import { createTools } from "../public/js/tools.js";
-import * as data from "../public/js/data.js";
+import { createMemoryDirectory } from "./support/memory-directory.js";
+import * as data from "../catalog/data.js";
 
 const read = createListingReader(data);
 
@@ -77,7 +78,7 @@ test("new service: a filled-in form becomes a listing in the catalog's shape", (
   assert.equal(result.listing.id, undefined, "the id is given by whoever stores the listing");
 });
 
-test("new service: the listing works in the search and in the tools like any other", () => {
+test("new service: the listing works in the search and in the tools like any other", async () => {
   const listing = { ...read(valid()).listing, id: "svc-061" };
   const catalog = { ...data, listings: [...data.listings, listing] };
   const now = new Date("2026-11-25T08:00:00Z"); // Wednesday 10:00 in Vilnius
@@ -86,9 +87,9 @@ test("new service: the listing works in the search and in the tools like any oth
   assert.equal(found.items[0].listing.id, "svc-061");
   assert.equal(found.items[0].availability.nextFreeDate, "2026-11-27");
 
-  const [search, get] = createTools({ catalog, now: () => now });
-  assert.equal(search.execute({ query: "dviraciai" }).results[0].id, "svc-061");
-  const { service } = get.execute({ id: "svc-061" });
+  const [search, get] = createTools({ catalog, directory: createMemoryDirectory(catalog), now: () => now });
+  assert.equal((await search.execute({ query: "dviraciai" })).results[0].id, "svc-061");
+  const { service } = await get.execute({ id: "svc-061" });
   assert.equal(service.title, "Dviračių remontas namuose");
   assert.deepEqual(service.rating, { average: 0, count: 0 });
   assert.equal(service.contact.website, null);

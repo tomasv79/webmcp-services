@@ -2,20 +2,26 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTools, LIMIT_DEFAULT, LIMIT_MAX } from "../public/js/tools.js";
 import { createListingReader, INPUT_FIELDS } from "../public/js/listing-input.js";
-import * as catalog from "../public/js/data.js";
+import * as catalog from "../catalog/data.js";
+import { DirectoryError } from "../public/js/directory.js";
+import { createMemoryDirectory } from "./support/memory-directory.js";
 
 const WED_1000 = new Date("2026-11-25T08:00:00Z"); // Wednesday 10:00 in Vilnius
 const WED_2100 = new Date("2026-11-25T19:00:00Z");
 
 function setup(overrides = {}) {
-  const calls = { showFilters: [], showListing: [], showDraft: [] };
+  const calls = { showFilters: [], views: [], showListing: [], showDraft: [] };
   const clock = { now: WED_1000 };
   const page = { signedIn: true };
   const tools = createTools({
     catalog,
+    directory: createMemoryDirectory(catalog),
     now: () => clock.now,
-    showFilters: (filters) => calls.showFilters.push(filters),
-    showListing: (id) => calls.showListing.push(id),
+    showFilters: (filters, view) => {
+      calls.showFilters.push(filters);
+      calls.views.push(view);
+    },
+    showListing: (listing) => calls.showListing.push(listing.id),
     showDraft: (input) => {
       calls.showDraft.push(input);
       return { signedIn: page.signedIn };
@@ -32,7 +38,7 @@ function setup(overrides = {}) {
   };
 }
 
-test("AC5.7 four tools with English names, descriptions and input schemas; only the three that read have the read-only hint", () => {
+test("AC5.7 four tools with English names, descriptions and input schemas; only the three that read have the read-only hint", async () => {
   const { tools } = setup();
   assert.deepEqual(tools.map((t) => t.name), ["search_services", "get_service", "list_service_filters", "draft_service"]);
   for (const tool of tools) {
@@ -55,18 +61,18 @@ test("AC5.7 four tools with English names, descriptions and input schemas; only 
   assert.deepEqual(tools[1].inputSchema.required, ["id"]);
 });
 
-test("AC5.3 every answer carries the notice, currency and time zone", () => {
+test("AC5.3 every answer carries the notice, currency and time zone", async () => {
   const t = setup();
-  for (const answer of [t.search({}), t.search({ category: "nope" }), t.get({ id: "svc-001" }), t.get({}), t.filters({})]) {
+  for (const answer of [await t.search({}), await t.search({ category: "nope" }), await t.get({ id: "svc-001" }), await t.get({}), await t.filters({})]) {
     assert.equal(answer.notice, "Fictional demo data");
     assert.equal(answer.currency, "EUR");
     assert.equal(answer.timeZone, "Europe/Vilnius");
   }
 });
 
-test("search_services without filters returns the first page of everything", () => {
+test("search_services without filters returns the first page of everything", async () => {
   const t = setup();
-  const answer = t.search({});
+  const answer = await t.search({});
   assert.equal(answer.total, 60);
   assert.equal(answer.returned, 10);
   assert.equal(answer.offset, 0);
@@ -76,20 +82,20 @@ test("search_services without filters returns the first page of everything", () 
   assert.equal(answer.error, undefined);
 });
 
-test("AC5.2 arguments that are not an object are treated as empty", () => {
+test("AC5.2 arguments that are not an object are treated as empty", async () => {
   const t = setup();
   for (const input of [undefined, null, "abc", 5, true, [], ["plumbing"]]) {
-    const answer = t.search(input);
+    const answer = await t.search(input);
     assert.equal(answer.total, 60, `input ${JSON.stringify(input)}`);
     assert.equal(answer.error, undefined);
   }
-  assert.equal(t.filters("abc").totalListings, 60);
-  assert.equal(t.get(null).error.field, "id");
+  assert.equal((await t.filters("abc")).totalListings, 60);
+  assert.equal((await t.get(null)).error.field, "id");
 });
 
-test("AC5.2 unknown keys are ignored and null means not given", () => {
+test("AC5.2 unknown keys are ignored and null means not given", async () => {
   const t = setup();
-  const answer = t.search({ foo: 1, radius: "5km", category: null, query: null, limit: null });
+  const answer = await t.search({ foo: 1, radius: "5km", category: null, query: null, limit: null });
   assert.equal(answer.total, 60);
   assert.deepEqual(answer.appliedFilters, { sortBy: "rating", limit: LIMIT_DEFAULT, offset: 0 });
 });
@@ -111,11 +117,10 @@ const INVALID = [
   ["offset", 1.5], ["offset", "0"],
 ];
 
-test("AC5.2 wrong input returns an error object naming the field, and never throws", () => {
+test("AC5.2 wrong input returns an error object naming the field, and never throws", async () => {
   for (const [field, value] of INVALID) {
     const t = setup();
-    let answer;
-    assert.doesNotThrow(() => { answer = t.search({ [field]: value }); }, `${field}=${String(value)}`);
+    const answer = await t.search({ [field]: value });
     assert.equal(answer.error?.field, field, `${field}=${String(value)} -> ${JSON.stringify(answer.error)}`);
     assert.equal(typeof answer.error.message, "string");
     assert.equal(answer.results, undefined);
@@ -123,86 +128,86 @@ test("AC5.2 wrong input returns an error object naming the field, and never thro
   }
 });
 
-test("AC5.2 enumerated fields list their valid values in the error", () => {
+test("AC5.2 enumerated fields list their valid values in the error", async () => {
   const t = setup();
-  assert.deepEqual(t.search({ category: "nope" }).error.validValues, catalog.categories.map((c) => c.id));
-  assert.deepEqual(t.search({ country: "FR" }).error.validValues, ["LT", "LV", "EE"]);
-  assert.deepEqual(t.search({ priceUnit: "week" }).error.validValues, ["hour", "job", "m2", "visit", "day"]);
-  assert.deepEqual(t.search({ sortBy: "cheapest" }).error.validValues, ["relevance", "rating", "price_asc", "price_desc", "soonest"]);
-  assert.deepEqual(t.search({ language: "de" }).error.validValues, ["lt", "lv", "et", "en", "ru"]);
-  const cities = t.search({ city: "Paris" }).error.validValues;
-  assert.equal(cities.length, 13);
+  assert.deepEqual((await t.search({ category: "nope" })).error.validValues, catalog.categories.map((c) => c.id));
+  assert.deepEqual((await t.search({ country: "FR" })).error.validValues, ["LT", "LV", "EE"]);
+  assert.deepEqual((await t.search({ priceUnit: "week" })).error.validValues, ["hour", "job", "m2", "visit", "day"]);
+  assert.deepEqual((await t.search({ sortBy: "cheapest" })).error.validValues, ["relevance", "rating", "price_asc", "price_desc", "soonest"]);
+  assert.deepEqual((await t.search({ language: "de" })).error.validValues, ["lt", "lv", "et", "en", "ru"]);
+  const cities = (await t.search({ city: "Paris" })).error.validValues;
+  assert.equal(cities.length, 31);
   assert.ok(cities.includes("Vilnius") && cities.includes("Rīga") && cities.includes("Pärnu"));
 });
 
-test("AC5.2 known values are accepted in any case and without diacritics, and returned in canonical form", () => {
+test("AC5.2 known values are accepted in any case and without diacritics, and returned in canonical form", async () => {
   const t = setup();
-  const applied = (input) => t.search(input).appliedFilters;
-  assert.equal(applied({ category: "PLUMBING" }).category, "plumbing");
-  assert.equal(applied({ category: " Auto-Repair " }).category, "auto-repair");
-  assert.equal(applied({ country: "lt" }).country, "LT");
-  assert.equal(applied({ country: "Latvia" }).country, "LV");
-  assert.equal(applied({ country: "Estija" }).country, "EE");
-  assert.equal(applied({ city: "riga" }).city, "Rīga");
-  assert.equal(applied({ city: "Ryga" }).city, "Rīga");
-  assert.equal(applied({ city: "Talinas" }).city, "Tallinn");
-  assert.equal(applied({ city: "SIAULIAI" }).city, "Šiauliai");
-  assert.equal(applied({ language: "RU" }).language, "ru");
-  assert.equal(applied({ priceUnit: "Hour" }).priceUnit, "hour");
-  assert.equal(applied({ sortBy: "Price_Asc" }).sortBy, "price_asc");
+  const applied = async (input) => (await t.search(input)).appliedFilters;
+  assert.equal((await applied({ category: "PLUMBING" })).category, "plumbing");
+  assert.equal((await applied({ category: " Auto-Repair " })).category, "auto-repair");
+  assert.equal((await applied({ country: "lt" })).country, "LT");
+  assert.equal((await applied({ country: "Latvia" })).country, "LV");
+  assert.equal((await applied({ country: "Estija" })).country, "EE");
+  assert.equal((await applied({ city: "riga" })).city, "Rīga");
+  assert.equal((await applied({ city: "Ryga" })).city, "Rīga");
+  assert.equal((await applied({ city: "Talinas" })).city, "Tallinn");
+  assert.equal((await applied({ city: "SIAULIAI" })).city, "Šiauliai");
+  assert.equal((await applied({ language: "RU" })).language, "ru");
+  assert.equal((await applied({ priceUnit: "Hour" })).priceUnit, "hour");
+  assert.equal((await applied({ sortBy: "Price_Asc" })).sortBy, "price_asc");
 });
 
-test("every value the input schema offers is accepted by the tool", () => {
+test("every value the input schema offers is accepted by the tool", async () => {
   const t = setup();
   const { properties } = t.tools[0].inputSchema;
   for (const [field, schema] of Object.entries(properties)) {
     for (const value of schema.enum ?? []) {
-      assert.equal(t.search({ [field]: value }).error, undefined, `${field}=${value}`);
+      assert.equal((await t.search({ [field]: value })).error, undefined, `${field}=${value}`);
     }
   }
   const bounds = { priceMax: [0.01, 5000], minRating: [1, 5], availableWithinDays: [0, 90], limit: [1, 20], offset: [0, 1000] };
   for (const [field, values] of Object.entries(bounds)) {
     assert.ok(properties[field], field);
-    for (const value of values) assert.equal(t.search({ [field]: value }).error, undefined, `${field}=${value}`);
+    for (const value of values) assert.equal((await t.search({ [field]: value })).error, undefined, `${field}=${value}`);
   }
   assert.equal(properties.availableWithinDays.maximum, 90);
   assert.equal(properties.limit.maximum, LIMIT_MAX);
   // Every listing can be reached with the largest availableWithinDays.
-  assert.equal(t.search({ availableWithinDays: 90 }).total, 60);
+  assert.equal((await t.search({ availableWithinDays: 90 })).total, 60);
 });
 
-test("AC5.2 limit is clamped to 1..20 and offset to 0 or more", () => {
+test("AC5.2 limit is clamped to 1..20 and offset to 0 or more", async () => {
   const t = setup();
-  assert.equal(t.search({ limit: 50 }).appliedFilters.limit, LIMIT_MAX);
-  assert.equal(t.search({ limit: 50 }).returned, 20);
-  assert.equal(t.search({ limit: 0 }).appliedFilters.limit, 1);
-  assert.equal(t.search({ limit: -3 }).returned, 1);
-  assert.equal(t.search({ offset: -1 }).appliedFilters.offset, 0);
+  assert.equal((await t.search({ limit: 50 })).appliedFilters.limit, LIMIT_MAX);
+  assert.equal((await t.search({ limit: 50 })).returned, 20);
+  assert.equal((await t.search({ limit: 0 })).appliedFilters.limit, 1);
+  assert.equal((await t.search({ limit: -3 })).returned, 1);
+  assert.equal((await t.search({ offset: -1 })).appliedFilters.offset, 0);
   assert.equal(LIMIT_DEFAULT, 10);
   assert.equal(LIMIT_MAX, 20);
 });
 
-test("AC5.2 query is trimmed and cut at 200 characters; blank means not given", () => {
+test("AC5.2 query is trimmed and cut at 200 characters; blank means not given", async () => {
   const t = setup();
-  assert.equal(t.search({ query: "  santechnikas  " }).appliedFilters.query, "santechnikas");
-  assert.equal(t.search({ query: "a".repeat(500) }).appliedFilters.query.length, 200);
-  const blank = t.search({ query: "    " });
+  assert.equal((await t.search({ query: "  santechnikas  " })).appliedFilters.query, "santechnikas");
+  assert.equal((await t.search({ query: "a".repeat(500) })).appliedFilters.query.length, 200);
+  const blank = await t.search({ query: "    " });
   assert.equal(blank.appliedFilters.query, undefined);
   assert.equal(blank.total, 60);
 });
 
-test("AC1.7 markup in a query comes back as plain text and matches nothing", () => {
+test("AC1.7 markup in a query comes back as plain text and matches nothing", async () => {
   const t = setup();
   const attack = "<img src=x onerror=alert(1)>";
-  const answer = t.search({ query: attack });
+  const answer = await t.search({ query: attack });
   assert.equal(answer.appliedFilters.query, attack);
   assert.equal(typeof answer.total, "number");
   assert.deepEqual(t.calls.showFilters[0], { query: attack });
 });
 
-test("search_services result fields", () => {
+test("search_services result fields", async () => {
   const t = setup();
-  const answer = t.search({ query: "santechnikas", city: "Vilnius" });
+  const answer = await t.search({ query: "santechnikas", city: "Vilnius" });
   assert.equal(answer.results[0].id, "svc-001");
   assert.deepEqual(answer.results[0], {
     id: "svc-001",
@@ -219,75 +224,90 @@ test("search_services result fields", () => {
   });
 });
 
-test("search_services uses null for a missing upper price or call-out fee", () => {
+test("search_services uses null for a missing upper price or call-out fee", async () => {
   const t = setup();
-  const result = t.search({ query: "Elektrikas Vytas" }).results.find((r) => r.id === "svc-008");
+  const result = (await t.search({ query: "Elektrikas Vytas" })).results.find((r) => r.id === "svc-008");
   assert.deepEqual(result.price, { from: 30, to: null, unit: "visit", negotiable: false, calloutFee: null });
 });
 
-test("search_services pages with limit and offset", () => {
+test("search_services pages with limit and offset", async () => {
   const t = setup();
-  const answer = t.search({ limit: 5, offset: 58 });
+  const answer = await t.search({ limit: 5, offset: 58 });
   assert.equal(answer.total, 60);
   assert.equal(answer.returned, 2);
   assert.equal(answer.offset, 58);
-  const first = t.search({ limit: 5 }).results.map((r) => r.id);
-  const second = t.search({ limit: 5, offset: 5 }).results.map((r) => r.id);
+  const first = (await t.search({ limit: 5 })).results.map((r) => r.id);
+  const second = (await t.search({ limit: 5, offset: 5 })).results.map((r) => r.id);
   assert.equal(new Set([...first, ...second]).size, 10);
 });
 
-test("search_services passes warnings through", () => {
+test("search_services passes warnings through", async () => {
   const t = setup();
-  assert.equal(t.search({ priceMax: 30 }).warnings.length, 1);
-  assert.deepEqual(t.search({ priceMax: 30, priceUnit: "hour" }).warnings, []);
+  assert.equal((await t.search({ priceMax: 30 })).warnings.length, 1);
+  assert.deepEqual((await t.search({ priceMax: 30, priceUnit: "hour" })).warnings, []);
 });
 
-test("AC5.4 search_services shows the same filters on the page, without paging", () => {
+test("AC5.4 search_services shows the same filters on the page, without paging", async () => {
   const t = setup();
-  const answer = t.search({ category: "cleaning", minRating: 4.5, language: "RU", limit: 2, offset: 1 });
+  const answer = await t.search({ category: "cleaning", minRating: 4.5, language: "RU", limit: 2, offset: 1 });
   assert.equal(t.calls.showFilters.length, 1);
   assert.deepEqual(t.calls.showFilters[0], { category: "cleaning", minRating: 4.5, language: "ru" });
   assert.deepEqual(answer.appliedFilters, {
     category: "cleaning", minRating: 4.5, language: "ru", sortBy: "rating", limit: 2, offset: 1,
   });
   assert.ok(answer.total > answer.returned || answer.total <= 3);
+  // The page is told where the agent's slice starts and how many listings matched, so it need not wait for its own search to say so.
+  assert.deepEqual(t.calls.views[0], { offset: 1, total: answer.total });
 });
 
-test("AC5.4 an explicit sort is shown on the page too; the default one is not forced", () => {
+test("AC5.4 an explicit sort is shown on the page too; the default one is not forced", async () => {
   const t = setup();
-  t.search({ sortBy: "soonest" });
-  t.search({ query: "valymas" });
+  await t.search({ sortBy: "soonest" });
+  await t.search({ query: "valymas" });
   assert.deepEqual(t.calls.showFilters[0], { sortBy: "soonest" });
   assert.deepEqual(t.calls.showFilters[1], { query: "valymas" });
-  assert.equal(t.search({ query: "valymas" }).appliedFilters.sortBy, "relevance");
+  assert.equal((await t.search({ query: "valymas" })).appliedFilters.sortBy, "relevance");
 });
 
-test("a failing page update does not fail the answer", () => {
+test("a failing page update does not fail the answer", async () => {
   const t = setup({ showFilters: () => { throw new Error("no DOM"); }, showListing: () => { throw new Error("no DOM"); } });
-  assert.equal(t.search({ category: "beauty" }).total, 5);
-  assert.equal(t.get({ id: "svc-041" }).service.id, "svc-041");
+  assert.equal((await t.search({ category: "beauty" })).total, 5);
+  assert.equal((await t.get({ id: "svc-041" })).service.id, "svc-041");
 });
 
-test("AC5.8 the clock is read at every call", () => {
+test("the database not answering is returned as an error object that says so", async () => {
+  const down = async () => { throw new DirectoryError("fetch failed"); };
+  const t = setup({ directory: { search: down, get: down, counts: down } });
+  for (const answer of [await t.search({}), await t.get({ id: "svc-001" }), await t.filters({})]) {
+    assert.equal(answer.error.field, null);
+    assert.match(answer.error.message, /database could not be reached/);
+    assert.equal(answer.notice, "Fictional demo data");
+    assert.equal(answer.results, undefined);
+  }
+  assert.deepEqual(t.calls.showFilters, []);
+  assert.deepEqual(t.calls.showListing, []);
+});
+
+test("AC5.8 the clock is read at every call", async () => {
   const t = setup();
-  const open = () => t.search({ query: "Santechnikas Algis" }).results.find((r) => r.id === "svc-002").availability.openNow;
-  assert.equal(open(), true);
+  const open = async () => (await t.search({ query: "Santechnikas Algis" })).results.find((r) => r.id === "svc-002").availability.openNow;
+  assert.equal(await open(), true);
   t.clock.now = WED_2100;
-  assert.equal(open(), false);
-  assert.equal(t.get({ id: "svc-002" }).service.availability.openNow, false);
+  assert.equal(await open(), false);
+  assert.equal((await t.get({ id: "svc-002" })).service.availability.openNow, false);
 });
 
-test("AC5.2 an unexpected failure inside a tool is returned as an error object", () => {
+test("AC5.2 an unexpected failure inside a tool is returned as an error object", async () => {
   const t = setup({ now: () => { throw new Error("clock broke"); } });
-  for (const answer of [t.search({}), t.get({ id: "svc-001" })]) {
+  for (const answer of [await t.search({}), await t.get({ id: "svc-001" })]) {
     assert.equal(answer.error.field, null);
     assert.equal(answer.notice, "Fictional demo data");
   }
 });
 
-test("AC5.5 get_service returns the whole listing with computed availability and shows the card", () => {
+test("AC5.5 get_service returns the whole listing with computed availability and shows the card", async () => {
   const t = setup();
-  const answer = t.get({ id: "svc-046" });
+  const answer = await t.get({ id: "svc-046" });
   const source = catalog.listings.find((l) => l.id === "svc-046");
   const { service } = answer;
   assert.equal(service.id, "svc-046");
@@ -312,9 +332,9 @@ test("AC5.5 get_service returns the whole listing with computed availability and
   assert.deepEqual(t.calls.showListing, ["svc-046"]);
 });
 
-test("AC5.5 get_service returns a copy, not the stored listing", () => {
+test("AC5.5 get_service returns a copy, not the stored listing", async () => {
   const t = setup();
-  const { service } = t.get({ id: "svc-001" });
+  const { service } = await t.get({ id: "svc-001" });
   service.tags.push("changed");
   service.availability.hours.mon = null;
   service.provider.name = "changed";
@@ -324,26 +344,26 @@ test("AC5.5 get_service returns a copy, not the stored listing", () => {
   assert.equal(source.provider.name, "Vandens Meistrai");
 });
 
-test("AC5.5 get_service accepts the id in any case and with spaces", () => {
+test("AC5.5 get_service accepts the id in any case and with spaces", async () => {
   const t = setup();
-  assert.equal(t.get({ id: "SVC-001" }).service.id, "svc-001");
-  assert.equal(t.get({ id: "  svc-001 " }).service.id, "svc-001");
+  assert.equal((await t.get({ id: "SVC-001" })).service.id, "svc-001");
+  assert.equal((await t.get({ id: "  svc-001 " })).service.id, "svc-001");
 });
 
-test("AC5.5 get_service with a missing, wrong-typed or unknown id returns an error and leaves the page alone", () => {
+test("AC5.5 get_service with a missing, wrong-typed or unknown id returns an error and leaves the page alone", async () => {
   const t = setup();
   for (const input of [{}, { id: null }, { id: 1 }, { id: "" }, { id: "svc-999" }, { id: "plumbing" }, { id: ["svc-001"] }]) {
-    const answer = t.get(input);
+    const answer = await t.get(input);
     assert.equal(answer.error?.field, "id", JSON.stringify(input));
     assert.equal(answer.service, undefined);
   }
-  assert.match(t.get({ id: "svc-999" }).error.message, /search_services/);
+  assert.match((await t.get({ id: "svc-999" })).error.message, /search_services/);
   assert.deepEqual(t.calls.showListing, []);
 });
 
-test("AC5.6 list_service_filters returns every valid filter value with counts", () => {
+test("AC5.6 list_service_filters returns every valid filter value with counts", async () => {
   const t = setup();
-  const answer = t.filters({});
+  const answer = await t.filters({});
   assert.equal(answer.totalListings, 60);
 
   assert.equal(answer.categories.length, 12);
@@ -354,7 +374,10 @@ test("AC5.6 list_service_filters returns every valid filter value with counts", 
   const latvia = answer.countries.find((c) => c.code === "LV");
   assert.equal(latvia.nameEn, "Latvia");
   assert.deepEqual(latvia.cities.find((c) => c.name === "Rīga"), { name: "Rīga", count: 8, alsoAccepted: ["Ryga", "Riga"] });
-  assert.equal(answer.countries.flatMap((c) => c.cities).length, 13);
+  // Every city of the vocabulary is listed, also the ones that have no listing among these 60.
+  assert.equal(answer.countries.flatMap((c) => c.cities).length, 31);
+  assert.equal(answer.countries.flatMap((c) => c.cities).filter((c) => c.count > 0).length, 13);
+  assert.deepEqual(latvia.cities.map((c) => c.count), [...latvia.cities.map((c) => c.count)].sort((a, b) => b - a), "the cities with the most listings come first");
   assert.equal(answer.countries.flatMap((c) => c.cities).reduce((sum, c) => sum + c.count, 0), 60);
 
   assert.deepEqual(answer.priceUnits.map((u) => u.unit), ["hour", "job", "m2", "visit", "day"]);
@@ -366,9 +389,9 @@ test("AC5.6 list_service_filters returns every valid filter value with counts", 
   assert.deepEqual(t.calls.showFilters, []);
 });
 
-test("every answer can be serialised to JSON", () => {
+test("every answer can be serialised to JSON", async () => {
   const t = setup();
-  for (const answer of [t.search({ query: "valymas" }), t.get({ id: "svc-010" }), t.filters()]) {
+  for (const answer of [await t.search({ query: "valymas" }), await t.get({ id: "svc-010" }), await t.filters()]) {
     assert.doesNotThrow(() => JSON.parse(JSON.stringify(answer)));
   }
 });
@@ -400,10 +423,10 @@ const draftInput = (overrides = {}) => ({
   ...overrides,
 });
 
-test("draft_service fills the form, adds nothing and says that the user has to submit", () => {
+test("draft_service fills the form, adds nothing and says that the user has to submit", async () => {
   const t = setup();
   const before = catalog.listings.length;
-  const answer = t.draft(draftInput());
+  const answer = await t.draft(draftInput());
 
   assert.equal(answer.error, undefined);
   assert.equal(answer.status, "awaiting_user");
@@ -429,13 +452,13 @@ test("draft_service fills the form, adds nothing and says that the user has to s
   });
   assert.equal(answer.draft.id, undefined, "a draft has no id");
   assert.equal(catalog.listings.length, before, "nothing is added to the catalog");
-  assert.equal(t.search({ query: "dviračių remontas" }).results.some((r) => r.title === "Dviračių remontas namuose"), false);
+  assert.equal((await t.search({ query: "dviračių remontas" })).results.some((r) => r.title === "Dviračių remontas namuose"), false);
   assert.equal(t.calls.showDraft.length, 1);
 });
 
-test("draft_service hands the page a form input that the form reads back to the same listing", () => {
+test("draft_service hands the page a form input that the form reads back to the same listing", async () => {
   const t = setup();
-  const answer = t.draft(draftInput({ priceTo: 40, calloutFee: 10, negotiable: true, remote: true }));
+  const answer = await t.draft(draftInput({ priceTo: 40, calloutFee: 10, negotiable: true, remote: true }));
   const [formInput] = t.calls.showDraft;
   // As the page sends a filled-in form: strings in the text and number fields, booleans in the checkboxes.
   assert.equal(formInput.yearsExperience, "7");
@@ -454,19 +477,19 @@ test("draft_service hands the page a form input that the form reads back to the 
   assert.deepEqual(read.listing.serviceArea, answer.draft.serviceArea);
 });
 
-test("draft_service says when the user has to sign in first, and still fills the form", () => {
+test("draft_service says when the user has to sign in first, and still fills the form", async () => {
   const t = setup();
   t.page.signedIn = false;
-  const answer = t.draft(draftInput());
+  const answer = await t.draft(draftInput());
   assert.equal(answer.status, "sign_in_required");
   assert.match(answer.message, /do not ask for the password/);
   assert.equal(answer.draft.title, "Dviračių remontas namuose");
   assert.equal(t.calls.showDraft.length, 1);
 });
 
-test("draft_service accepts known values in any case and spelling, as the search does", () => {
+test("draft_service accepts known values in any case and spelling, as the search does", async () => {
   const t = setup();
-  const answer = t.draft(draftInput({
+  const answer = await t.draft(draftInput({
     category: "Auto-Repair", country: "Latvia", city: "ryga", postalCode: "LV-1050", priceUnit: "HOUR",
     providerType: "Company", languages: ["LV", "En"],
   }));
@@ -478,9 +501,9 @@ test("draft_service accepts known values in any case and spelling, as the search
   assert.deepEqual(answer.draft.languages, ["lv", "en"]);
 });
 
-test("draft_service returns every wrong field at once, in the order of the form, and leaves the page alone", () => {
+test("draft_service returns every wrong field at once, in the order of the form, and leaves the page alone", async () => {
   const t = setup();
-  const answer = t.draft(draftInput({ title: "abc", category: "bikes", email: "nope", city: "Rīga", priceFrom: 0, languages: [] }));
+  const answer = await t.draft(draftInput({ title: "abc", category: "bikes", email: "nope", city: "Rīga", priceFrom: 0, languages: [] }));
   assert.deepEqual(answer.errors.map((e) => e.field), ["title", "category", "email", "city", "priceFrom", "languages"]);
   assert.deepEqual(answer.error, answer.errors[0]);
   assert.equal(answer.status, undefined);
@@ -496,14 +519,14 @@ test("draft_service returns every wrong field at once, in the order of the form,
   assert.deepEqual(byField.languages.validValues, ["lt", "lv", "et", "en", "ru"]);
 });
 
-test("draft_service explains every field the form reader can refuse in English", () => {
+test("draft_service explains every field the form reader can refuse in English", async () => {
   const t = setup();
-  const empty = t.draft({});
+  const empty = await t.draft({});
   assert.deepEqual(empty.errors.map((e) => e.field), [
     "title", "category", "description", "providerName", "providerType", "yearsExperience", "phone", "email",
     "country", "city", "address", "priceFrom", "priceUnit", "languages", "hours", "leadTimeDays",
   ]);
-  const more = t.draft(draftInput({
+  const more = await t.draft(draftInput({
     tags: Array(11).fill(0).map((_, i) => `tag${i}`), postalCode: "123", radiusKm: 0, priceTo: 5, calloutFee: -1,
     hours: { mon: { open: "18:00", close: "09:00" }, tue: "09:00-18:00" },
   }));
@@ -513,31 +536,31 @@ test("draft_service explains every field the form reader can refuse in English",
     assert.ok(error.message.startsWith(error.field), `${error.field}: ${error.message}`);
     assert.doesNotMatch(error.message, /is not valid\.$/, `${error.field} has a rule of its own`);
   }
-  assert.equal(t.draft(draftInput({ city: "Paris", country: "FR" })).errors.find((e) => e.field === "city").validValues.length, 13);
+  assert.equal((await t.draft(draftInput({ city: "Paris", country: "FR" }))).errors.find((e) => e.field === "city").validValues.length, 31);
 });
 
-test("draft_service refuses what the form reader would let through in silence", () => {
+test("draft_service refuses what the form reader would let through in silence", async () => {
   const t = setup();
   for (const field of ["travelsToClient", "remote", "negotiable", "emergency"]) {
     for (const value of ["true", "false", 1, 0]) {
-      const answer = t.draft(draftInput({ [field]: value }));
+      const answer = await t.draft(draftInput({ [field]: value }));
       assert.deepEqual(answer.errors.map((e) => e.field), [field], `${field}=${JSON.stringify(value)}`);
       assert.match(answer.error.message, /boolean/);
     }
   }
-  const days = t.draft(draftInput({ hours: { monday: { open: "09:00", close: "18:00" }, tue: { open: "09:00", close: "18:00" } } }));
+  const days = await t.draft(draftInput({ hours: { monday: { open: "09:00", close: "18:00" }, tue: { open: "09:00", close: "18:00" } } }));
   assert.deepEqual(days.errors.map((e) => e.field), ["hours"]);
   assert.match(days.error.message, /monday/);
   assert.deepEqual(days.error.validValues, ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 
-  assert.deepEqual(t.draft(draftInput({ tags: 5 })).errors.map((e) => e.field), ["tags"]);
-  assert.deepEqual(t.draft(draftInput({ tags: ["ok", 5] })).errors.map((e) => e.field), ["tags"]);
+  assert.deepEqual((await t.draft(draftInput({ tags: 5 }))).errors.map((e) => e.field), ["tags"]);
+  assert.deepEqual((await t.draft(draftInput({ tags: ["ok", 5] }))).errors.map((e) => e.field), ["tags"]);
   assert.deepEqual(t.calls.showDraft, []);
 });
 
-test("draft_service warns about input it did not use", () => {
+test("draft_service warns about input it did not use", async () => {
   const t = setup();
-  const answer = t.draft(draftInput({ website: "https://ratai.example", rating: 5, travelsToClient: false, emergency: true, leadTimeDays: 3 }));
+  const answer = await t.draft(draftInput({ website: "https://ratai.example", rating: 5, travelsToClient: false, emergency: true, leadTimeDays: 3 }));
   assert.equal(answer.error, undefined);
   assert.equal(answer.warnings.length, 3);
   assert.match(answer.warnings[0], /website, rating/);
@@ -549,56 +572,55 @@ test("draft_service warns about input it did not use", () => {
   assert.equal(t.calls.showDraft[0].radiusKm, undefined, "the form keeps its own default distance");
 });
 
-test("draft_service takes a list of tags as the text a person would type into the form", () => {
+test("draft_service takes a list of tags as the text a person would type into the form", async () => {
   const t = setup();
-  assert.deepEqual(t.draft(draftInput({ tags: ["a, b", " c "] })).draft.tags, ["a", "b", "c"]);
-  assert.deepEqual(t.draft(draftInput({ tags: "x; y" })).draft.tags, ["x", "y"]);
-  assert.deepEqual(t.draft(draftInput({ tags: undefined })).draft.tags, []);
+  assert.deepEqual((await t.draft(draftInput({ tags: ["a, b", " c "] }))).draft.tags, ["a", "b", "c"]);
+  assert.deepEqual((await t.draft(draftInput({ tags: "x; y" }))).draft.tags, ["x", "y"]);
+  assert.deepEqual((await t.draft(draftInput({ tags: undefined }))).draft.tags, []);
 });
 
-test("draft_service says so when the page cannot show the form", () => {
+test("draft_service says so when the page cannot show the form", async () => {
   for (const showDraft of [undefined, () => { throw new Error("no DOM"); }]) {
     const t = setup({ showDraft });
-    const answer = t.draft(draftInput());
+    const answer = await t.draft(draftInput());
     assert.equal(answer.error.field, null);
     assert.match(answer.error.message, /nothing was drafted/);
     assert.equal(answer.status, undefined);
   }
 });
 
-test("draft_service treats arguments that are not an object as an empty form", () => {
+test("draft_service treats arguments that are not an object as an empty form", async () => {
   const t = setup();
   for (const input of [undefined, null, "abc", 5, []]) {
-    let answer;
-    assert.doesNotThrow(() => { answer = t.draft(input); });
+    const answer = await t.draft(input);
     assert.equal(answer.error.field, "title");
   }
 });
 
-test("draft_service: every value its input schema offers is accepted, and the required fields are the ones the form needs", () => {
+test("draft_service: every value its input schema offers is accepted, and the required fields are the ones the form needs", async () => {
   const t = setup();
   const { properties, required } = t.tools[3].inputSchema;
   assert.deepEqual(Object.keys(properties).sort(), [...INPUT_FIELDS].sort());
   for (const field of ["category", "providerType", "priceUnit"]) {
-    for (const value of properties[field].enum) assert.equal(t.draft(draftInput({ [field]: value })).error, undefined, `${field}=${value}`);
+    for (const value of properties[field].enum) assert.equal((await t.draft(draftInput({ [field]: value }))).error, undefined, `${field}=${value}`);
   }
-  for (const code of properties.languages.items.enum) assert.equal(t.draft(draftInput({ languages: [code] })).error, undefined, code);
+  for (const code of properties.languages.items.enum) assert.equal((await t.draft(draftInput({ languages: [code] }))).error, undefined, code);
   assert.deepEqual(properties.country.enum, ["LT", "LV", "EE"]);
   assert.deepEqual(Object.keys(properties.hours.properties), ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
   const bounds = { yearsExperience: [0, 70], radiusKm: [1, 500], priceFrom: [0.01, 25], priceTo: [25, 100000], calloutFee: [0, 1000], leadTimeDays: [0, 60] };
   for (const [field, values] of Object.entries(bounds)) {
     assert.ok(properties[field], field);
-    for (const value of values) assert.equal(t.draft(draftInput({ [field]: value })).error, undefined, `${field}=${value}`);
+    for (const value of values) assert.equal((await t.draft(draftInput({ [field]: value }))).error, undefined, `${field}=${value}`);
   }
   // Leaving out any required field is an error for that field; the optional ones can all be left out together.
   for (const field of required) {
-    assert.equal(t.draft(draftInput({ [field]: undefined })).error?.field, field, field);
+    assert.equal((await t.draft(draftInput({ [field]: undefined }))).error?.field, field, field);
   }
   const optional = Object.keys(properties).filter((field) => !required.includes(field) && field !== "leadTimeDays");
-  assert.equal(t.draft(draftInput(Object.fromEntries(optional.map((field) => [field, undefined])))).error, undefined);
+  assert.equal(await t.draft(draftInput(Object.fromEntries(optional.map((field) => [field, undefined])))).error, undefined);
 });
 
-test("draft_service answers can be serialised to JSON", () => {
+test("draft_service answers can be serialised to JSON", async () => {
   const t = setup();
-  for (const answer of [t.draft(draftInput()), t.draft({})]) assert.doesNotThrow(() => JSON.parse(JSON.stringify(answer)));
+  for (const answer of [await t.draft(draftInput()), await t.draft({})]) assert.doesNotThrow(() => JSON.parse(JSON.stringify(answer)));
 });

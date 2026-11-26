@@ -1,39 +1,9 @@
 // Fictional demo data. Every provider, contact and address below is invented.
 // Emails and websites use the reserved ".example" domain; phone numbers start with 000, which no Baltic operator assigns.
 
-export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-export const PRICE_UNITS = ["hour", "job", "m2", "visit", "day"];
-export const LANGUAGES = ["lt", "lv", "et", "en", "ru"];
+// The values a listing may have (categories, countries, cities, units, languages) are in the page's vocabulary.js.
 
-export const countries = [
-  { code: "LT", nameLt: "Lietuva", nameEn: "Lithuania" },
-  { code: "LV", nameLt: "Latvija", nameEn: "Latvia" },
-  { code: "EE", nameLt: "Estija", nameEn: "Estonia" },
-];
-
-// Lithuanian and plain-ASCII names people use for the Latvian and Estonian cities.
-export const cityAliases = {
-  "Rīga": ["Ryga", "Riga"],
-  "Daugavpils": ["Daugpilis"],
-  "Liepāja": ["Liepoja"],
-  "Tallinn": ["Talinas", "Tallinas"],
-  "Pärnu": ["Pernu", "Piarnu"],
-};
-
-export const categories = [
-  { id: "plumbing", nameLt: "Santechnika", nameEn: "Plumbing" },
-  { id: "electrical", nameLt: "Elektros darbai", nameEn: "Electrical work" },
-  { id: "renovation", nameLt: "Remontas ir apdaila", nameEn: "Renovation and finishing" },
-  { id: "cleaning", nameLt: "Valymas", nameEn: "Cleaning" },
-  { id: "moving", nameLt: "Perkraustymas ir pervežimas", nameEn: "Moving and transport" },
-  { id: "auto-repair", nameLt: "Automobilių remontas", nameEn: "Car repair" },
-  { id: "appliance-repair", nameLt: "Buitinės technikos remontas", nameEn: "Appliance repair" },
-  { id: "gardening", nameLt: "Aplinkos tvarkymas", nameEn: "Gardening and outdoor work" },
-  { id: "beauty", nameLt: "Grožio paslaugos", nameEn: "Beauty services" },
-  { id: "tutoring", nameLt: "Korepetitoriai ir mokymai", nameEn: "Tutoring and lessons" },
-  { id: "it-support", nameLt: "IT ir kompiuterių remontas", nameEn: "IT support and computer repair" },
-  { id: "photography", nameLt: "Fotografija", nameEn: "Photography" },
-];
+export { WEEKDAYS, PRICE_UNITS, LANGUAGES, countries, categories, cities, cityAliases } from "../public/js/vocabulary.js";
 
 // Working-hour presets. A day is [open, close] or null when closed.
 const weekdays = (open, close) => ({

@@ -5,8 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TEXT, UI_LANGUAGES, STORAGE_KEY, chooseLanguage, createI18n, formatNumber } from "../public/js/i18n.js";
 import { createListingReader, MESSAGES, WEEKDAY_LABELS } from "../public/js/listing-input.js";
-import { SORT_OPTIONS } from "../public/js/search.js";
-import * as data from "../public/js/data.js";
+import { SORT_OPTIONS } from "../public/js/directory.js";
+import * as data from "../catalog/data.js";
 
 const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
 const html = readFileSync(join(publicDir, "index.html"), "utf8");
@@ -109,6 +109,16 @@ test("i18n: every text app.js asks for exists", () => {
   assert.ok(asked.size > 40, `${asked.size} keys`);
   for (const key of asked) assert.ok(key in TEXT.lt, `${key} is not in i18n.js`);
   assert.doesNotMatch(appSource, /[ąčęėįšųūž]/i, "app.js has no Lithuanian text of its own");
+
+  // Texts named by a reason that auth.js or directory.js gives.
+  const reasons = {
+    "login.error": ["credentials", "unconfirmed", "exists", "password", "email", "rate", "closed", "unavailable"],
+    "form.failed": ["unavailable", "limit", "refused"],
+  };
+  for (const [group, names] of Object.entries(reasons)) {
+    assert.ok(appSource.includes(`t(\`${group}.\${`), `app.js uses ${group}`);
+    for (const name of names) assert.equal(typeof TEXT.en[`${group}.${name}`], "string", `${group}.${name}`);
+  }
 
   // Names looked up by a code from the catalog.
   const groups = { unit: data.PRICE_UNITS, priceFor: data.PRICE_UNITS, language: data.LANGUAGES, sort: SORT_OPTIONS };

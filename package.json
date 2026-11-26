@@ -2,12 +2,13 @@
   "name": "webmcp-services",
   "private": true,
   "version": "0.1.0",
-  "description": "Demo services directory with WebMCP tools. All data is fictional.",
+  "description": "Demo services directory with WebMCP tools, on Supabase. The catalog is fictional.",
   "type": "module",
   "engines": {
     "node": ">=22.13"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "seed": "node scripts/seed.js"
   }
 }

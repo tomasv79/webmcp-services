@@ -8,18 +8,12 @@ import { fileURLToPath } from "node:url";
 const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
 const read = (path) => readFileSync(join(publicDir, path), "utf8");
 const html = read("index.html");
-const authModule = await import("../public/js/auth.js");
+const config = await import("../public/js/config.js");
 
 const RELAY_URL = "https://cdn.jsdelivr.net/npm/@mcp-b/webmcp-local-relay@6.2.0/dist/browser/embed.js";
 const POLYFILL_SHA256 = "e6d042e734e1dd08a455f249936ab045575c19fddf860f7e120a0dcaf350f05c";
 // SHA-384 of embed.js in @mcp-b/webmcp-local-relay@6.2.0. The browser refuses the script if the CDN serves other bytes.
 const RELAY_INTEGRITY = "sha384-TdRkxKVAOiJ9BvMYRwxw+u7/H9nqwfD2Ovc2wXVGXrmWiqjGH+ONecZxIfnfqQIa";
-// dist/index.mjs (kept here as sqlite3.js) and dist/sqlite3.wasm of @sqlite.org/sqlite-wasm@3.54.1-build1.
-const SQLITE_SHA256 = {
-  "vendor/sqlite3.js": "0dcdd860e6ec672623b13b8b8e41bb6c78be7a5df80ec553fc4f69160161c8af",
-  "vendor/sqlite3.wasm": "b8a92a19f441a90ff2339fe988fbe317c4adf3ed844096f12aee04aa72d58257",
-};
-
 const attributes = (tag) => Object.fromEntries([...tag.matchAll(/([\w-]+)(?:="([^"]*)")?/g)].slice(1).map((m) => [m[1], m[2] ?? ""]));
 const tags = (name) => [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, "g"))].map((m) => ({ index: m.index, attrs: attributes(m[0]) }));
 const ownScripts = readdirSync(join(publicDir, "js")).filter((file) => file.endsWith(".js"));
@@ -43,12 +37,9 @@ test("AC7.1 no hard-coded host, port or absolute path in the page files", () => 
     const source = read(`js/${file}`);
     assert.doesNotMatch(source, /localhost|127\.0\.0\.1|:5175|:5173/, `js/${file}`);
     const urls = source.match(/https?:\/\/[^\s"'`)]+/g) ?? [];
-    if (file === "data.js" || file === "generate.js") {
-      // Fictional provider websites: fixed in data.js, built from a name in generate.js.
-      for (const url of urls) assert.match(url, /^https:\/\/([a-z0-9-]+|\$\{[A-Za-z]+\})\.example$/, `${file} ${url}`);
-    } else {
-      assert.deepEqual(urls, [], `js/${file} contains a URL`);
-    }
+    // The one address the scripts know is the Supabase project, and it is written in one place.
+    if (file === "config.js") assert.deepEqual(urls, [config.SUPABASE_URL], "config.js has the project URL and no other");
+    else assert.deepEqual(urls, [], `js/${file} contains a URL`);
     for (const [, specifier] of source.matchAll(/\bfrom\s+"([^"]+)"/g)) {
       assert.match(specifier, /^\.\//, `js/${file} imports ${specifier}`);
       assert.ok(existsSync(join(publicDir, "js", specifier)), `js/${file} imports a missing file ${specifier}`);
@@ -91,29 +82,35 @@ test("AC8.2 the vendored polyfill is unchanged and ships with its licence", () =
   assert.match(read("vendor/LICENSE-webmcp-polyfill.txt"), /Apache License\s+Version 2\.0/);
 });
 
-test("sqlite: the vendored build is unchanged, ships with its licence and is loaded by sqlite.js alone", () => {
-  for (const [file, expected] of Object.entries(SQLITE_SHA256)) {
-    assert.equal(createHash("sha256").update(readFileSync(join(publicDir, file))).digest("hex"), expected, file);
+test("supabase: the page knows one project, by HTTPS, and holds no key that could write past the database rules", () => {
+  assert.match(config.SUPABASE_URL, /^https:\/\/[a-z0-9]+\.supabase\.co$/);
+  const key = config.SUPABASE_KEY;
+  assert.equal(typeof key, "string");
+  assert.doesNotMatch(key, /^sb_secret_/, "a secret key must never be in the page");
+  // An older project has JWT keys: the one in the page must be the anon key, not the service role key.
+  if (key.split(".").length === 3) {
+    const { role } = JSON.parse(Buffer.from(key.split(".")[1], "base64url").toString("utf8"));
+    assert.equal(role, "anon", "the key in the page must be the anon key");
+  } else if (key !== "") {
+    assert.match(key, /^sb_publishable_/, "the key in the page must be the publishable key");
   }
-  assert.match(read("vendor/LICENSE-sqlite-wasm.txt"), /Apache License\s+Version 2\.0/);
-  // sqlite3.js fetches the .wasm file from beside itself, under this name.
-  assert.match(read("vendor/sqlite3.js"), /new URL\("sqlite3\.wasm", import\.meta\.url\)/);
-
-  // Loaded on request and not from index.html, so the page never waits for it to show the catalog.
-  assert.doesNotMatch(html, /sqlite3/);
-  const loaded = ownScripts.flatMap((file) => [...read(`js/${file}`).matchAll(/\bimport\(\s*"([^"]+)"\s*\)/g)].map((m) => `${file}: ${m[1]}`));
-  assert.deepEqual(loaded, ["sqlite.js: ../vendor/sqlite3.js"]);
+  // Only config.js and the script that starts the page know the project.
+  for (const file of ownScripts.filter((name) => name !== "config.js" && name !== "app.js")) {
+    assert.doesNotMatch(read(`js/${file}`), /config\.js|SUPABASE_/, `js/${file}`);
+  }
+  // Nothing is loaded on request any more: the page has no SQLite and no other late script.
+  assert.deepEqual(ownScripts.flatMap((file) => [...read(`js/${file}`).matchAll(/\bimport\(/g)].map(() => file)), []);
+  assert.equal(existsSync(join(publicDir, "vendor/sqlite3.js")), false);
 });
 
-test("sqlite: the page shows the catalog first and registers the tools without waiting for the stored listings", () => {
+test("supabase: the page asks for the list and registers the tools without waiting for the database", () => {
   const appSource = read("js/app.js");
   const start = appSource.indexOf("// ── Start");
-  const shown = appSource.indexOf("\nrender();", start);
-  const loading = appSource.indexOf("\nconst stored = openUserListings();", start);
-  const registered = appSource.indexOf("\nawait registerTools(answeringAfter(stored, tools));", start);
-  assert.ok(start !== -1 && start < shown && shown < loading && loading < registered, `${start} < ${shown} < ${loading} < ${registered}`);
-  // An agent that lists the tools right after the page loads must find them: SQLite takes seconds to arrive.
-  assert.doesNotMatch(appSource.slice(start, registered), /await (openUserListings\(|stored\b)/);
+  const asked = appSource.indexOf("\nrender();", start);
+  const registered = appSource.indexOf("\nawait registerTools(tools);", start);
+  assert.ok(start !== -1 && start < asked && asked < registered, `${start} < ${asked} < ${registered}`);
+  // An agent that lists the tools right after the page loads must find them, however slow the database is.
+  assert.doesNotMatch(appSource.slice(start, registered), /\bawait\b/);
 });
 
 test("AC1.4 and AC1.5 the page has a demo banner, no outside links and no form except the sign-in and the new service", () => {
@@ -125,9 +122,10 @@ test("AC1.4 and AC1.5 the page has a demo banner, no outside links and no form e
   assert.doesNotMatch(html, /<iframe\b/i);
 });
 
-test("login: the sign-in form sends nothing anywhere and sits in a dialog", () => {
+test("login: the sign-in form is sent by the script alone and sits in a dialog", () => {
   const [form] = tags("form");
-  // method="dialog" only closes the dialog; a plain form would put the fields into the address bar.
+  // method="dialog" and no action: the browser itself sends the fields nowhere and never puts them into the address
+  // bar. The script sends them to Supabase Auth.
   assert.equal(form.attrs.method, "dialog");
   assert.equal(form.attrs.action, undefined);
   const dialogStart = html.indexOf('<dialog id="login-dialog"');
@@ -135,16 +133,19 @@ test("login: the sign-in form sends nothing anywhere and sits in a dialog", () =
   assert.ok(dialogStart !== -1 && dialogStart < form.index && form.index < dialogEnd, "the form is inside #login-dialog");
 
   const inputs = Object.fromEntries(tags("input").map((input) => [input.attrs.id, input.attrs]));
-  assert.equal(inputs["login-username"].autocomplete, "username");
+  assert.equal(inputs["login-email"].type, "email");
+  assert.equal(inputs["login-email"].autocomplete, "username");
   assert.equal(inputs["login-password"].type, "password");
   assert.equal(inputs["login-password"].autocomplete, "current-password");
+  // The name is asked for only when an account is created, and is never required.
+  assert.equal(inputs["login-name"].required, undefined);
+  assert.match(html, /<div id="login-name-field"[^>]*\shidden>/);
   // No value may be written into the markup.
-  assert.equal(inputs["login-username"].value, undefined);
-  assert.equal(inputs["login-password"].value, undefined);
+  for (const id of ["login-name", "login-email", "login-password"]) assert.equal(inputs[id].value, undefined, id);
 });
 
 test("login: the page has the account controls the script expects, hidden until the script decides", () => {
-  for (const id of ["account-user", "sign-in", "sign-out", "login-dialog", "login-form", "login-username", "login-password", "login-error", "login-cancel"]) {
+  for (const id of ["account-user", "sign-in", "sign-out", "login-dialog", "login-form", "login-title", "login-name-field", "login-name", "login-email", "login-password", "login-error", "login-mode", "login-cancel", "login-submit"]) {
     assert.match(html, new RegExp(`id="${id}"`), `#${id}`);
     assert.match(read("js/app.js"), new RegExp(`\\$\\("${id}"\\)`), `app.js uses #${id}`);
   }
@@ -153,20 +154,18 @@ test("login: the page has the account controls the script expects, hidden until 
   }
 });
 
-test("login: the demo passwords are only in auth.js and the README", () => {
-  const { USERS } = authModule;
-  const readme = readFileSync(join(publicDir, "../README.md"), "utf8");
-  for (const user of USERS) {
-    assert.ok(readme.includes(`\`${user.username}\``), `README lists ${user.username}`);
-    assert.ok(readme.includes(`\`${user.password}\``), `README lists the password of ${user.username}`);
-    assert.ok(!html.includes(user.password), "index.html");
-    for (const file of ownScripts.filter((name) => name !== "auth.js")) {
-      assert.ok(!read(`js/${file}`).includes(user.password), `js/${file}`);
-    }
-  }
+test("login: the password is handed to Supabase and kept nowhere in the page", () => {
+  const appSource = read("js/app.js");
+  // Read from the field in one place, for the one call; never written to the storage or the address.
+  assert.equal(appSource.split("dom.loginPassword.value").length - 1, 2, "read once, cleared once");
+  assert.doesNotMatch(read("js/auth.js"), /password[^\n]*setItem|setItem[^\n]*password/i);
+  // The dialog forgets what was typed whenever it closes.
+  assert.match(appSource, /dom\.loginDialog\.addEventListener\("close", \(\) => \{\s+dom\.loginForm\.reset\(\);/);
+  // The session that comes back with the confirmation link is taken out of the address bar.
+  assert.match(appSource, /history\.replaceState\(null, "", `\$\{location\.pathname\}\$\{location\.search\}`\)/);
 });
 
-test("new service: the form sends nothing anywhere and sits in a dialog", () => {
+test("new service: the form is sent by the script alone, sits in a dialog and says that the listing will be public", () => {
   const form = tags("form").find((tag) => tag.attrs.id === "service-form");
   assert.equal(form.attrs.method, "dialog");
   assert.equal(form.attrs.action, undefined);
@@ -175,13 +174,13 @@ test("new service: the form sends nothing anywhere and sits in a dialog", () => 
   const dialogStart = html.indexOf('<dialog id="service-dialog"');
   const dialogEnd = html.indexOf("</dialog>", dialogStart);
   assert.ok(dialogStart !== -1 && dialogStart < form.index && form.index < dialogEnd, "the form is inside #service-dialog");
-  assert.match(html.slice(dialogStart, dialogEnd), /tik šioje naršyklėje/, "the form says where the listing is kept");
+  assert.match(html.slice(dialogStart, dialogEnd), /viešoje duomenų bazėje[^<]*matoma visiems/, "the form says where the listing is kept and who sees it");
 });
 
 test("new service: the page has every element the script expects, and a label for every field", () => {
   const appSource = read("js/app.js");
   const ids = [...appSource.matchAll(/\$\("([^"]+)"\)/g)].map((m) => m[1]);
-  for (const id of ["add-service", "service-dialog", "service-form", "service-error", "service-draft", "service-cancel", "s-languages", "s-hours", "login-reason"]) {
+  for (const id of ["add-service", "service-dialog", "service-form", "service-error", "service-draft", "service-cancel", "service-submit", "s-languages", "s-hours", "login-reason"]) {
     assert.ok(ids.includes(id), `app.js uses #${id}`);
   }
   for (const id of ids) assert.equal(html.split(`id="${id}"`).length - 1, 1, `#${id} is in the page once`);

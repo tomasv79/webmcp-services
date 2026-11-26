@@ -2,25 +2,6 @@
 // Works with native WebMCP and with the vendored W3C polyfill; does nothing when neither is present.
 
 /**
- * The same tools, each answering only after `ready` has settled. They can then be registered before the data
- * they read has arrived, so an agent that lists the tools right after the page loads finds them.
- * A tool still answers when `ready` rejects: it works with what the page has.
- * @param {Promise<unknown>} ready
- * @param {Array<object>} tools
- * @returns {Array<object>}
- */
-export function answeringAfter(ready, tools) {
-  const settled = Promise.resolve(ready).catch(() => {});
-  return tools.map((tool) => ({
-    ...tool,
-    execute: async (...args) => {
-      await settled;
-      return tool.execute(...args);
-    },
-  }));
-}
-
-/**
  * @param {Array<object>} tools  Tool definitions: { name, description, inputSchema, annotations, execute }.
  * @param {{ doc?: object, log?: { info: Function, warn: Function } }} [options]
  * @returns {Promise<{ registered: string[], failed: string[], abort: () => void }>}

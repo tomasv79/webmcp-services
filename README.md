@@ -2,13 +2,15 @@
 
 A one-page services directory in the style of paslaugos.lt, with 10,000 fictional providers from Lithuania, Latvia and Estonia.
 AI agents search it through three WebMCP tools, and a fourth tool lets an agent fill in the new-service form for the
-visitor to submit. The site has no backend. It has two forms: a demo sign-in, and a form that adds a service and keeps it
-in the visitor's own browser, in a SQLite database that runs inside the page.
+visitor to submit. The page is static files; the listings and the accounts are in a [Supabase](https://supabase.com)
+project. A visitor can create an account, sign in and add a service, which every other visitor then sees.
 
-**All shipped data is invented.** Emails and websites use the reserved `.example` domain, and phone numbers start with `000`, which no Baltic operator assigns.
-A service added with the form holds whatever its author typed; it never leaves that browser.
+**The catalog is invented.** Its emails and websites use the reserved `.example` domain, and its phone numbers start with `000`, which no Baltic operator assigns.
+A service added with the form holds whatever its author typed, is public, and nobody checks it.
 
 ## Run
+
+The database comes first (see [Supabase](#supabase) below). Then:
 
 ```bash
 docker compose up -d --build
@@ -23,15 +25,84 @@ docker run --rm -p 127.0.0.1:5176:80 webmcp-services:local
 
 Stop and remove the image with `docker compose down --rmi local`.
 
+The local page and the hosted page talk to the same Supabase project: there is one database, and a service added
+from `localhost` is in it for everyone.
+
+## Supabase
+
+The project is `https://swilbbbdlcmwibyoiqmq.supabase.co`. `public/js/config.js` has its URL and its publishable key.
+That key is meant to be public: what it may do is decided by the row-level security in the migration. The secret
+key is never written into a file of this repository.
+
+Setting the project up, once:
+
+1. **Tables and functions.** With the Supabase CLI signed in (`npx supabase login`), push the migrations:
+
+   ```bash
+   npx supabase db push --remote=swilbbbdlcmwibyoiqmq
+   ```
+
+   This is how `supabase/migrations/20261126000000_directory.sql` was applied, and the project remembers it, so a
+   later migration file is pushed the same way. Without the CLI, paste the file into the project's SQL editor and
+   run it. It creates the tables `categories`, `cities` and `listings`, the functions `search_listings` and
+   `listing_counts`, and the access rules.
+2. **The key in the page.** Copy the publishable key (Project Settings → API keys; `anon` in an older project) into
+   `SUPABASE_KEY` in `public/js/config.js`.
+3. **The catalog.** Write the categories, the cities and the 10,000 listings with the secret key, which is read from
+   the environment:
+
+   ```bash
+   SUPABASE_SECRET_KEY=... npm run seed
+   ```
+
+   It sends about 18 MB in twenty requests, and can be run again whenever the catalog changes: it replaces the catalog's rows and leaves
+   the listings that visitors added alone.
+4. **Sign-up without a confirmation email.** `supabase/config.toml` switches "Confirm email" off, and is written
+   to the project with:
+
+   ```bash
+   npx supabase config push --remote=swilbbbdlcmwibyoiqmq
+   ```
+
+   Only what the file declares is changed. To have new accounts confirm their email instead, set
+   `enable_confirmations = true` there and push again, and in Authentication → URL Configuration set the Site URL to
+   `https://tomasv79.github.io/webmcp-services/` and add `http://localhost:5175/**` to the redirect URLs; without
+   that the link in the email opens `localhost:3000`.
+
+Who may do what in the database:
+
+| | Read listings, search | Add a listing | Change or delete |
+|---|---|---|---|
+| Anyone (publishable key) | yes | no | no |
+| A signed-in visitor | yes | yes, and it becomes theirs | no |
+| The secret key (seed script, dashboard) | yes | yes | yes |
+
+- A listing is one row: its number (the 61 of `svc-00061`), the listing itself as JSON in `data`, and its search words.
+  The columns the search filters and sorts by (category, city, price, rating, working hours, ...) are generated from
+  `data`, so they cannot disagree with it.
+- A listing that arrives from a visitor gets its number from a sequence that starts at 10001, its owner from the
+  session, a rating of zero and `verified: false`, whatever was sent. One account can add at most 50.
+- The database checks the shape of a listing: a category and a city (in the right country) that exist, a positive
+  price, a known unit, known languages, well-formed working hours. The text limits are checked by the form
+  (`js/listing-input.js`), and the page puts every visitor's listing through those checks again before showing it, so
+  a row written past the form is left out instead of breaking the page.
+- Who added a listing (`owner`) is not readable through the API. To remove a listing, delete its row in the dashboard.
+- The search runs in Postgres (`search_listings`): filters, relevance, availability at the caller's moment in
+  Europe/Vilnius time, sorting and paging. The words of a query are stemmed in the page (`js/text.js`), and the same
+  code writes the search words of every listing, so both sides split and fold text the same way.
+
 ## Hosting
 
 `.github/workflows/pages.yml` publishes the `public/` folder to GitHub Pages on every push to `main`, at
 <https://tomasv79.github.io/webmcp-services/>. It needs Settings → Pages → Source set to "GitHub Actions" once.
 On a GitHub Free account Pages works only for a public repository.
 
-The hosted page is unlisted, not private: anyone with the link can open it. The page carries a `noindex` tag so search
-engines skip it. For the relay to accept the hosted page, add `https://tomasv79.github.io` to its `--widget-origin`
-list (see Relay below).
+Supabase holds the data and the accounts, not the page: it serves HTML as plain text, so the files stay on Pages
+(or in the container).
+
+The hosted page is unlisted, not private: anyone with the link can open it, create an account and add a service.
+The page carries a `noindex` tag so search engines skip it. For the relay to accept the hosted page, add
+`https://tomasv79.github.io` to its `--widget-origin` list (see Relay below).
 
 ## Tests
 
@@ -39,11 +110,19 @@ list (see Relay below).
 npm test
 ```
 
-No install step: the tests use Node's built-in runner and, for the listing database, Node's built-in SQLite
-(`node:sqlite`, Node 22.13 or newer). Run them once more with another machine time zone to check the date logic:
+No install step: the tests use Node's built-in runner (Node 22.13 or newer) and no network. Supabase is replaced by
+small stand-ins, and `tests/support/reference-search.js` is the search written out in JavaScript: what the
+database function has to do. Run them once more with another machine time zone to check the date logic:
 
 ```bash
 TZ=America/New_York npm test
+```
+
+One file, `tests/supabase.live.test.js`, checks a real database against that reference search: a few hundred
+searches must give the same listings in the same order. It only reads, and it is skipped unless it is told where to look:
+
+```bash
+SUPABASE_URL=https://swilbbbdlcmwibyoiqmq.supabase.co SUPABASE_KEY=<publishable key> npm test
 ```
 
 ## Languages
@@ -65,83 +144,51 @@ without a reload, keeping the filters, the open page of results and whatever is 
 
 The rest of this file calls the buttons by their Lithuanian names, with the English ones in brackets.
 
-## Sign-in
+## Accounts
 
-The header has a **Prisijungti** (**Sign in**) button that opens a sign-in dialog. Two demo users exist:
+The header has a **Prisijungti** (**Sign in**) button that opens a dialog. The same dialog creates an account:
+**Neturiu paskyros** (**I have no account**) switches it, and adds an optional name.
 
-| Username | Password | Shown as |
-|---|---|---|
-| `jonas` | `jonas123` | Jonas Jonaitis |
-| `ona` | `ona123` | Ona Onaitė |
-
-- This is a demo sign-in, not security. The user list is in `public/js/auth.js`, which the browser downloads, and the
-  check runs in the page. It tells the page who is using it and protects nothing. Never put a real password there.
-- Signing in changes the header: it shows the user's name and an **Atsijungti** (**Sign out**) button. It is also needed to add a
-  service (see below). The directory and the WebMCP tools work the same signed in or out.
-- The username ignores case and surrounding spaces; the password must match exactly.
-- The signed-in username (never the password) is kept in `localStorage` under `webmcp-services.user`, so it survives a
-  reload and is shared by all tabs of the site. Where `localStorage` is blocked, sign-in lasts until the reload.
-- The form has `method="dialog"` and no `action`, so nothing is sent anywhere and the fields never reach the address bar.
+- Accounts are real ones, kept by Supabase Auth: an email and a password. The password is sent to Supabase over HTTPS
+  and checked there; the page keeps it nowhere.
+- "Confirm email" is switched off in the project (`supabase/config.toml`), so a new account is signed in as soon as
+  it is created and no email is sent. Nobody checks that the address belongs to the person, so anyone can sign up
+  and add services; one account can add at most 50.
+- The page also handles a project that confirms emails: the new account then gets an email with a link, the link
+  comes back to the page, and the page signs the person in and takes the session out of the address bar. Supabase's
+  own mail service sends only a few emails per hour; for more, set up SMTP in the project.
+- Signing in changes the header: it shows the name (or the email) and an **Atsijungti** (**Sign out**) button. It is
+  also needed to add a service (see below). The directory and the reading tools work the same signed in or out.
+- The session (two tokens and the name, never the password) is kept in `localStorage` under
+  `webmcp-services.session`, so it survives a reload and is shared by all tabs of the site. A token that is about to
+  end is renewed when it is next needed. Where `localStorage` is blocked, the session lasts until the reload.
+- The form has `method="dialog"` and no `action`, so the browser itself sends nothing and the fields never reach the
+  address bar; the script makes the one call to Supabase.
 
 ## Adding a service
 
 The header has a **Pridėti paslaugą** (**Add service**) button that opens the new-service form. A signed-out visitor gets the sign-in
 dialog first and the form right after signing in.
 
-- There is no backend, so a new service is kept in a SQLite database in the browser (see below). It is visible only in
-  that browser, in all tabs of the site, and survives a reload. Clearing the site data removes it; the page has no
-  button to edit or delete a service yet.
+- A new service is saved in the Supabase database and is public at once: every visitor and every agent that searches
+  the directory finds it. The form says so. The page has no button to edit or delete a service yet.
 - A new service is a normal listing: the list, the filters and the three search tools find it. It gets the next free id
-  (`svc-10001`, `svc-10002`, ...), a **Pridėta šioje naršyklėje** (**Added in this browser**) badge, and is shown highlighted above the list right
-  after it is added.
+  (`svc-10001`, `svc-10002`, ...; a number is not reused, so there can be gaps), a **Pridėta lankytojo**
+  (**Added by a visitor**) badge, and is shown highlighted above the list right after it is added.
 - It has no reviews: `rating` is `{ average: 0, count: 0 }`, so it sorts after the rated listings and `minRating` leaves
   it out. It is never `verified`. The form asks for one language only, so `titleEn` and `descriptionEn` repeat the text
   as typed.
-- The city is chosen from the cities the catalog already has, so the city filter and the tool vocabulary do not change.
+- The city is chosen from the cities of `js/vocabulary.js`, so the city filter and the tool vocabulary do not change.
 - The fields are checked by `js/listing-input.js`, with messages in the page's language under each wrong field. The browser's own
   validation is off (`novalidate`). A decimal comma is accepted in prices; a postal code may be typed without the
   country prefix (`08318` becomes `LT-08318`).
-- What is stored is the form input, not the finished listing. Every page load reads it through the same checks, so a
-  damaged or hand-edited entry is skipped instead of breaking the page.
-- Where `localStorage` is blocked or full, or SQLite could not start, the service is added until the reload and the
-  page says so.
-- Like the sign-in, the form has `method="dialog"` and no `action`: nothing is sent anywhere.
+- The form stays open until the database has taken the listing. When it has not (no connection, a session that ended,
+  the limit of 50 per account), the form says why and keeps what was typed.
 - A form that is cancelled keeps what was typed; it is emptied after the service is added.
 - An agent can fill in the form with the `draft_service` tool (see below). The form then shows a line saying that an AI
   agent filled it in. Only the person can submit it.
-
-### The SQLite database
-
-The added services are rows of one table, in SQLite compiled to WebAssembly and running in the page. Nothing runs on a
-server, so this works the same from Docker and from GitHub Pages.
-
-```sql
-CREATE TABLE listings (
-  number INTEGER PRIMARY KEY CHECK (number BETWEEN 1 AND 999999999),  -- the 10001 of svc-10001
-  added_by TEXT NOT NULL,                                             -- username
-  input TEXT NOT NULL CHECK (json_valid(input))                       -- the form input as JSON
-) STRICT
-```
-
-- The database lives in memory. After every change its whole image (the bytes of a normal SQLite file, base64-encoded)
-  is written to `localStorage` under `webmcp-services.db`. With a few services it takes about 22 KB there and it grows
-  by roughly 2 KB per service, so the usual 5 MB limit is far away.
-- It is one value written in one step, so another tab never reads half a change; a tab reads the database again when
-  the stored value is not the one it last saw. SQLite's own `localStorage` backend (kvvfs) is not used: it writes page
-  by page and its locks work inside one tab only.
-- Two tabs that add a service in the same instant can still overwrite each other, as with any `localStorage` value.
-- The engine is `vendor/sqlite3.js` and `vendor/sqlite3.wasm`: unchanged copies of `dist/index.mjs` and
-  `dist/sqlite3.wasm` from the official [`@sqlite.org/sqlite-wasm`](https://www.npmjs.com/package/@sqlite.org/sqlite-wasm)
-  package, version 3.54.1-build1 (Apache-2.0; SQLite itself is in the public domain). A test pins both by SHA-256. To
-  update, replace the two files and the hashes in `tests/page.test.js`.
-- The two files are about 1.5 MB together. The page shows the catalog first and loads them after, so the first paint
-  does not wait; the saved services appear a moment later. The WebMCP tools are registered at once, and a tool call
-  waits until the saved services are in.
-- Services saved by an earlier version of the page (a JSON list under `webmcp-services.listings`) are moved into the
-  database on the first load and the old value is removed.
-- A stored value that is not a usable database is ignored and replaced by the next service that is added.
-- To look inside, copy the value from the browser's developer tools and decode it:
-  `base64 -d < value.txt > listings.db`, then `sqlite3 listings.db "SELECT * FROM listings"`.
+- Services that an earlier version of the page kept in the browser (`webmcp-services.db` in `localStorage`) are not
+  moved to the database: they were private, and the database is public. The page no longer reads them.
 
 ## Tools
 
@@ -155,12 +202,15 @@ CREATE TABLE listings (
 Things worth knowing when calling them:
 
 - Every answer starts with `notice: "Fictional demo data"`, `currency: "EUR"` and `timeZone: "Europe/Vilnius"`.
-- Wrong input never throws. The answer is `{ error: { field, message, validValues? } }`.
+- Wrong input never throws. The answer is `{ error: { field, message, validValues? } }`. When the database cannot be
+  reached, the answer is such an error too, with `field: null`.
+- The tools are registered as soon as the page loads; every call asks the database afresh.
 - `query` matches Lithuanian and English text, ignores case and diacritics, and tolerates word endings (`Vilniuje` finds Vilnius). Words shorter than 3 letters are ignored. A listing needs at least one matching word; more matches rank higher.
 - `city` accepts local and Lithuanian spellings without diacritics (`Rīga`, `riga`, `Ryga`).
 - `openNow` means inside working hours right now. It says nothing about free capacity. "Can start today" is `availableWithinDays: 0`.
 - Prices are the advertised starting price. Call-out fees are returned separately. Without `priceUnit`, `priceMax` and the price sorts compare across units and the answer carries a warning.
 - `search_services` also filters the list on the page and opens the page that holds the returned results. `get_service` shows the listing highlighted above the list; the filters stay as they are.
+- `list_service_filters` lists every city of the vocabulary, also one that has no listing (count 0).
 - `limit` is clamped to 1..20 (default 10); walk through a large result with `offset`. The page itself shows 10 cards per page, so a tool answer of up to 20 results can cover two pages; the page opens at the first of them.
 - The input schema lists the canonical values. The tools also accept other letter case, country names (`Latvia`, `Estija`) and city spellings, but a client that validates against the schema first will only let the canonical values through.
 
@@ -176,6 +226,8 @@ The first three tools only read. `draft_service` is the one tool that changes th
   opens first and the filled form right after it. The agent never gets or types the password.
 - `draft` is the listing as the form will read it, without an id. The tool returns at once and cannot see whether the
   person submitted or cancelled; afterwards `search_services` finds the new listing.
+- The tool's description tells the agent that an added listing is public, and to pass nothing the person does not
+  want published.
 - Input: `title`, `category`, `description`, `tags`, `providerName`, `providerType`, `yearsExperience`, `phone`, `email`,
   `country`, `city`, `address`, `postalCode`, `travelsToClient`, `radiusKm`, `remote`, `priceFrom`, `priceTo`,
   `priceUnit`, `calloutFee`, `negotiable`, `languages`, `hours`, `leadTimeDays`, `emergency`. Numbers are numbers,
@@ -195,41 +247,49 @@ The first three tools only read. `draft_service` is the one tool that changes th
 public/
   index.html, styles.css
   vendor/webmcp-polyfill.js   W3C polyfill, unchanged copy; a no-op where the browser has WebMCP
-  vendor/sqlite3.js, .wasm    SQLite compiled to WebAssembly, unchanged copies from @sqlite.org/sqlite-wasm
-  js/data.js                  categories, countries, city aliases, 60 hand-written listings
-  js/generate.js              seeded generator for the other 9,940 listings
-  js/catalog.js               data.js + generated listings = the 10,000 the page and tools use
+  js/config.js                the Supabase project: its URL and its publishable key
+  js/supabase.js              createSupabase({ url, key, fetch }): rpc, select, insert, auth; the few calls, over fetch
+  js/vocabulary.js            categories, countries, cities and their other spellings, price units, languages
   js/text.js                  normalise, tokenise, stem match
   js/availability.js          Vilnius clock, openNow, nextFreeDate
-  js/search.js                searchServices(catalog, filters, now)
-  js/tools.js                 createTools({ catalog, now, showFilters, showListing, showDraft })
-  js/webmcp.js                registerTools(tools), answeringAfter(ready, tools)
-  js/auth.js                  two demo users, createAuth({ storage }): signIn, signOut, currentUser
+  js/directory.js             createDirectory({ client, catalog, token }): search, get, counts, add; the listings in
+                              the database. Also sortFor(filters) and searchWords(listing, catalog)
+  js/tools.js                 createTools({ catalog, directory, now, showFilters, showListing, showDraft })
+  js/webmcp.js                registerTools(tools)
+  js/auth.js                  createAuth({ client, storage }): signIn, signUp, signOut, currentUser, token,
+                              adoptRedirect; accounts with Supabase Auth
   js/i18n.js                  the page's own words in Lithuanian and English, createI18n({ storage, preferred }):
                               language, setLanguage, t, number
   js/listing-input.js         createListingReader(catalog): form values in, a listing or a list of errors out;
-                              inputOfListing(listing): the way back, used to fill the form from a draft
-  js/user-listings.js         createUserListings({ catalog, read, store }): sync, add; added listings from the store
-  js/listing-store.js         createListingStore({ sqlite, storage }): records, append; the SQLite database of added
-                              listings and its image in localStorage
-  js/sqlite.js                loadSqlite(): starts vendor/sqlite3.js and wraps it into open, exec, rows, image
+                              inputOfListing(listing): the way back, used to fill the form from a draft and to check
+                              a visitor's listing that comes from the database
   js/app.js                   page rendering and wiring
-tests/                        one file per module, plus page.test.js for index.html rules and sqlite-engine.js,
-                              the same engine calls on node:sqlite
+catalog/                      what the seed script writes to the database; the page does not load it
+  data.js                     60 hand-written listings
+  generate.js                 seeded generator for the other 9,940 listings
+  catalog.js                  data.js + generated listings = the 10,000
+scripts/seed.js               writes the categories, the cities and the catalog to Supabase with the secret key
+supabase/migrations/          the tables, the search function and the access rules, as SQL
+supabase/config.toml          the project settings this repository decides: no confirmation email at sign-up
+tests/                        one file per module, page.test.js for index.html rules, migration.test.js for the SQL,
+                              supabase.live.test.js for a real database, and support/: the reference search and a
+                              directory that answers from memory
 ```
 
-The page and the tools call the same `searchServices`, so a tool answer and the visible list agree.
-The page works on its own copy of the catalog and appends added services to it; the search index and the tools' id
-lookup take in whatever was appended since their last call.
-Availability is computed from the current time on every call, so the data does not go stale.
+The page and the tools call the same `directory.search`, so a tool answer and the visible list agree.
+The page keeps no copy of the listings: it asks for ten at a time, and again once a minute, because "open now"
+depends on the clock. An answer that arrives after a newer search has started is dropped, and typing in the search
+box asks the database only after a short pause.
+The caller's moment goes to the database with every search, so the "open now" filter there and the availability the
+page works out for each card are read off the same clock.
 
 ## Data
 
-- 60 listings are written by hand in `js/data.js`.
-- 9,940 more are generated in the browser at page load by `js/generate.js` from a fixed seed, so every load and every
-  test run sees the same 10,000 listings (`svc-001` to `svc-060`, then `svc-00061` to `svc-10000`). No large data file is
-  shipped. Change `TOTAL_LISTINGS` in `js/catalog.js` for a different size, or `DEFAULT_SEED` in `js/generate.js` for
-  different data.
+- 60 listings are written by hand in `catalog/data.js`.
+- 9,940 more are generated by `catalog/generate.js` from a fixed seed, so every run of the seed script and every
+  test run sees the same 10,000 listings (`svc-001` to `svc-060`, then `svc-00061` to `svc-10000`). Change
+  `TOTAL_LISTINGS` in `catalog/catalog.js` for a different size (the first number a visitor's listing gets is fixed
+  at 10001 in the migration), or `DEFAULT_SEED` in `catalog/generate.js` for different data, and run the seed script again.
 - 12 categories, 4 generated service types each; 31 cities: 13 in Lithuania, 9 in Latvia, 9 in Estonia.
   About half the listings are Lithuanian, a quarter Latvian and a quarter Estonian.
 - The ids of generated listings are stable as long as `generate.js` and the number of hand-written listings do not
@@ -242,8 +302,8 @@ Availability is computed from the current time on every call, so the data does n
   300 and 990, so a generated address is unlikely to exist.
 - Latvian and Estonian phone numbers have four free digits, which holds about 9,000 generated listings per country.
   The generator throws a clear error beyond that.
-- Measured on the development machine: generating takes about 35 ms, building the search index about 0.3 s (once),
-  a search 3-30 ms. The page loads in about 0.3 s and renders 10 cards per page.
+- Measured against a local Supabase Postgres: seeding takes about 2 s, a text search about 20 ms, and the slowest
+  search (every listing, soonest first) about 110 ms.
 
 ## Relay
 
@@ -272,6 +332,8 @@ How the relay presents the tools (checked on 2026-11-25 with the flight demo ope
 
 ## Merging with other sites later
 
-- Every URL the page loads is relative except the one relay script, so the site works at `/`, under a sub-path, or on a subdomain.
+- Every URL the page loads is relative except the one relay script, and the scripts know one outside address, the Supabase
+  project in `js/config.js`. So the site works at `/`, under a sub-path, or on a subdomain; a new address has to be added to the
+  redirect URLs of the Supabase project, or the confirmation emails will not link back to it.
 - The container listens on plain port 80; put it behind any reverse proxy.
 - WebMCP needs a secure context: `localhost` or HTTPS. The subdomain must be HTTPS, and its origin must be added to the relay.

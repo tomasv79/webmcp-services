@@ -8,6 +8,7 @@ import { listings as handWritten, categories } from "./data.js";
 export const DEFAULT_SEED = 20261125;
 
 // name, country, share of that country's listings, and the Lithuanian "in <city>".
+// The names and countries repeat `cities` of the page's vocabulary.js; a test keeps the two the same.
 export const CITIES = [
   { name: "Vilnius", country: "LT", weight: 30, locativeLt: "Vilniuje" },
   { name: "Kaunas", country: "LT", weight: 18, locativeLt: "Kaune" },
@@ -41,15 +42,6 @@ export const CITIES = [
   { name: "Kuressaare", country: "EE", weight: 2, locativeLt: "Kuresarėje" },
   { name: "Haapsalu", country: "EE", weight: 2, locativeLt: "Hapsalu" },
 ];
-
-// Spellings that differ from the city name by more than diacritics.
-export const extraCityAliases = {
-  "Ventspils": ["Ventspilis"],
-  "Kohtla-Järve": ["Kohtla Jarve", "Kohtla Jervė"],
-  "Viljandi": ["Viljandis"],
-  "Kuressaare": ["Kuresarė"],
-  "Haapsalu": ["Hapsalu"],
-};
 
 const COUNTRY_WEIGHTS = [["LT", 50], ["LV", 25], ["EE", 25]];
 

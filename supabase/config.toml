@@ -1,0 +1,8 @@
+# The settings of the Supabase project that this repository decides. `npx supabase config push` writes them to the
+# project; a setting that is not declared here stays as the dashboard has it.
+project_id = "swilbbbdlcmwibyoiqmq"
+
+[auth.email]
+# No confirmation email: a new account is signed in as soon as it is created. Anyone can then sign up with any
+# address, so the limit of 50 listings per account in the migration is the only brake on what one account adds.
+enable_confirmations = false
