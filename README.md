@@ -216,8 +216,8 @@ dialog first and the form right after signing in.
 
 | Tool | Input | Returns |
 |---|---|---|
-| `search_services` | `query`, `category`, `country`, `city`, `priceMax`, `priceUnit`, `minRating`, `language`, `travelsToClient`, `openNow`, `availableWithinDays`, `sortBy`, `limit`, `offset` (all optional) | `total`, `returned`, `offset`, `appliedFilters`, `warnings`, `results[]`, each with its `agentNotes` |
-| `get_service` | `id` | `service`: the full listing with weekly hours, computed availability and `agentNotes` |
+| `search_services` | `query`, `category`, `country`, `city`, `priceMax`, `priceUnit`, `minRating`, `language`, `travelsToClient`, `openNow`, `availableWithinDays`, `sortBy`, `limit`, `offset` (all optional) | `total`, `returned`, `offset`, `appliedFilters`, `warnings`, `results[]`, each with its `url` and `agentNotes` |
+| `get_service` | `id` | `service`: the full listing with its `url`, weekly hours, computed availability and `agentNotes` |
 | `list_service_filters` | none | valid categories, countries, cities, price units, languages, sort options, with counts |
 | `draft_service` | the fields of the new-service form | `status`, `message`, `draft`, `warnings` |
 
@@ -232,6 +232,11 @@ Things worth knowing when calling them:
 - `openNow` means inside working hours right now. It says nothing about free capacity. "Can start today" is `availableWithinDays: 0`.
 - Prices are the advertised starting price. Call-out fees are returned separately. Without `priceUnit`, `priceMax` and the price sorts compare across units and the answer carries a warning.
 - `search_services` also filters the list on the page and opens the page that holds the returned results. `get_service` shows the listing highlighted above the list; the filters stay as they are.
+- Every result and every full record has a `url`: the address of the listing on the page, which is the page's own
+  address with the id after a `#` (`https://tomasv79.github.io/webmcp-services/#svc-00061`). Opening it shows the
+  page with that listing highlighted above the list, under **Pagal nuorodą atidaryta paslauga** (**Service opened by
+  a link**); following such a link in an open page does the same without a reload. An id that no listing has gets a
+  line saying so. The address is built from where the page is open, so a page on `localhost` gives `localhost` links.
 - `list_service_filters` lists every city of the vocabulary, also one that has no listing (count 0).
 - `limit` is clamped to 1..20 (default 10); walk through a large result with `offset`. The page itself shows 10 cards per page, so a tool answer of up to 20 results can cover two pages; the page opens at the first of them.
 - The input schema lists the canonical values. The tools also accept other letter case, country names (`Latvia`, `Estija`) and city spellings, but a client that validates against the schema first will only let the canonical values through.

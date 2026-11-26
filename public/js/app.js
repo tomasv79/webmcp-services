@@ -569,6 +569,31 @@ function openLogin(next = null) {
 /** The confirmation email links back to this page, wherever it is hosted. */
 const pageAddress = () => `${location.origin}${location.pathname}`;
 
+// ── A link to one listing: the page address with "#svc-00061", as the tools give it out ──
+
+const listingUrl = (id) => `${pageAddress()}#${id}`;
+
+/** The page was opened by such a link, or the link was followed in the open page: show its listing above the list. */
+async function showLinked() {
+  const id = /^#(svc-\d{1,9})$/i.exec(location.hash)?.[1].toLowerCase();
+  if (id === undefined) return;
+  let listing = null;
+  try {
+    listing = await directory.get(Number(id.slice(4)));
+  } catch {
+    // The database did not answer, and the list below says so.
+    return;
+  }
+  // Only what the address bar still asks for: a slow answer does not replace a newer link.
+  if (location.hash.toLowerCase() !== `#${id}`) return;
+  if (!listing) return showNotice(() => t("notice.linkMissing", id));
+  pinned = listing;
+  pinnedLabel = "pinned.byLink";
+  renderPinned(new Date());
+  dom.pinned.scrollIntoView({ block: "start" });
+  hideNotice();
+}
+
 /** The link in the confirmation email comes back here with the session in the address: take it and tidy the address. */
 async function adoptConfirmation() {
   const result = await auth.adoptRedirect(location.hash);
@@ -859,6 +884,8 @@ bindServiceForm();
 renderAccount();
 render();
 adoptConfirmation();
+showLinked();
+window.addEventListener("hashchange", showLinked);
 
 // "Open now" depends on the clock, so ask again once a minute while the page is visible.
 // Not while someone is using a control: an open dropdown would close.
@@ -869,5 +896,5 @@ setInterval(() => {
 
 // The tools are registered at once, so an agent that lists them right after the page loads finds them.
 // They need nothing from the database to be listed; every call asks it afresh.
-const tools = createTools({ catalog, directory, now: () => new Date(), showFilters, showListing, showDraft });
+const tools = createTools({ catalog, directory, now: () => new Date(), listingUrl, showFilters, showListing, showDraft });
 await registerTools(tools);

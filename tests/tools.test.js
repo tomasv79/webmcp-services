@@ -18,6 +18,7 @@ function setup(overrides = {}) {
     catalog,
     directory: createMemoryDirectory(catalog),
     now: () => clock.now,
+    listingUrl: (id) => `https://directory.example/services/#${id}`,
     showFilters: (filters, view) => {
       calls.showFilters.push(filters);
       calls.views.push(view);
@@ -212,6 +213,7 @@ test("search_services result fields", async () => {
   assert.equal(answer.results[0].id, "svc-001");
   assert.deepEqual(answer.results[0], {
     id: "svc-001",
+    url: "https://directory.example/services/#svc-001",
     title: "Santechnikos darbai ir avarijų šalinimas",
     titleEn: "Plumbing work and emergency repairs",
     category: "plumbing",
@@ -411,6 +413,25 @@ test("a listing without agent notes is still answered: one a visitor added, or w
   const none = setup({ directory: { ...memory, notes: async () => { asked += 1; return new Map(); } } });
   assert.equal((await none.get({ id: "plumbing" })).error.field, "id");
   assert.equal(asked, 0);
+});
+
+test("every result and every full record has the address of its listing on the page, or null where the page gives none", async () => {
+  const t = setup();
+  const { results } = await t.search({ category: "moving" });
+  assert.deepEqual(results.map((result) => result.url), results.map((result) => `https://directory.example/services/#${result.id}`));
+  assert.deepEqual(Object.keys(results[0]).slice(0, 2), ["id", "url"]);
+  const { service } = await t.get({ id: "svc-1" });
+  assert.equal(service.url, "https://directory.example/services/#svc-001");
+  assert.deepEqual(Object.keys(service).slice(0, 2), ["id", "url"]);
+  for (const tool of t.tools.filter((each) => ["search_services", "get_service"].includes(each.name))) {
+    assert.match(tool.description, /\burl\b[^.]*address of the listing/, tool.name);
+  }
+
+  for (const listingUrl of [undefined, () => "", () => 5, () => { throw new Error("no page"); }]) {
+    const none = setup({ listingUrl });
+    assert.equal((await none.get({ id: "svc-001" })).service.url, null);
+    assert.deepEqual((await none.search({ category: "moving" })).results.map((result) => result.url), [null, null, null, null, null]);
+  }
 });
 
 test("AC5.5 get_service returns a copy, not the stored listing", async () => {

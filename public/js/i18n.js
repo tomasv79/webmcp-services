@@ -170,6 +170,7 @@ export const TEXT = {
 
     "pinned.label": "Atidaryta paslauga",
     "pinned.byAgent": "DI agento atidaryta paslauga",
+    "pinned.byLink": "Pagal nuorodą atidaryta paslauga",
     "pinned.own": "Jūsų pridėta paslauga",
     "pinned.close": "Uždaryti",
 
@@ -204,6 +205,7 @@ export const TEXT = {
 
     "notice.search": (total) => `DI agentas atliko paiešką ir pritaikė filtrus: rasta paslaugų – ${lt(total)}.`,
     "notice.opened": (title) => `DI agentas atidarė paslaugą: ${title}.`,
+    "notice.linkMissing": (id) => `Nuorodoje nurodyta paslauga nerasta: ${id}.`,
     "notice.added": (title, id) => `Paslauga pridėta: ${title} (${id}). Ją mato visi lankytojai.`,
   },
 
@@ -357,6 +359,7 @@ export const TEXT = {
 
     "pinned.label": "Opened service",
     "pinned.byAgent": "Service opened by the AI agent",
+    "pinned.byLink": "Service opened by a link",
     "pinned.own": "The service you added",
     "pinned.close": "Close",
 
@@ -391,6 +394,7 @@ export const TEXT = {
 
     "notice.search": (total) => `The AI agent ran a search and applied the filters: services found – ${en(total)}.`,
     "notice.opened": (title) => `The AI agent opened a service: ${title}.`,
+    "notice.linkMissing": (id) => `The service in the link was not found: ${id}.`,
     "notice.added": (title, id) => `Service added: ${title} (${id}). Every visitor can see it.`,
   },
 };

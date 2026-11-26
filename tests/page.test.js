@@ -225,6 +225,15 @@ test("AC1.2 and AC1.3 the page has the controls the script expects", () => {
   }
 });
 
+test("a listing has an address: the page opens the listing named after the #, and gives the tools that address", () => {
+  const appSource = read("js/app.js");
+  // Relative to wherever the page is hosted, like everything else.
+  assert.match(appSource, /const listingUrl = \(id\) => `\$\{pageAddress\(\)\}#\$\{id\}`;/);
+  assert.match(appSource, /\/\^#\(svc-\\d\{1,9\}\)\$\/i\.exec\(location\.hash\)/);
+  // On load and when a link is followed in the open page; the tools are still registered without waiting for it.
+  assert.match(appSource, /\nshowLinked\(\);\nwindow\.addEventListener\("hashchange", showLinked\);/);
+});
+
 test("agent notes: the page itself never asks for them and has no words for them", () => {
   // Only tools.js reads the notes, through directory.notes; nothing that draws the page knows they exist.
   for (const file of ownScripts.filter((name) => !["tools.js", "directory.js"].includes(name))) {
@@ -238,6 +247,6 @@ test("agent notes: the page itself never asks for them and has no words for them
 test("only the temporary check tool is gone: the page registers the real tools with all three page effects", () => {
   const appSource = read("js/app.js");
   assert.doesNotMatch(appSource, /ping_services/);
-  assert.match(appSource, /createTools\(\{[^}]*\bshowFilters, showListing, showDraft \}\)/);
+  assert.match(appSource, /createTools\(\{[^}]*\blistingUrl, showFilters, showListing, showDraft \}\)/);
   assert.match(appSource, /registerTools\(/);
 });
